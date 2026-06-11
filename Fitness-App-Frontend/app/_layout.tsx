@@ -7,10 +7,14 @@ import { Toast } from "react-native-toast-message/lib/src/Toast";
 import { ActivityIndicator, View, StatusBar, Platform } from "react-native";
 import { theme } from "@/constants/theme";
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { ThemeProvider, DarkTheme } from "@react-navigation/native";
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context";
 import * as SystemUI from 'expo-system-ui';
+import { configureReanimatedLogger } from "react-native-reanimated";
+
+// Reanimated's dev-mode strict freezing breaks @gorhom/bottom-sheet's enum
+// constants ("Cannot assign to read-only property 'NONE'").
+configureReanimatedLogger({ strict: false });
 
 export default function RootLayout() {
   const [sessionChecked, setSessionChecked] = useState(false);
@@ -71,33 +75,31 @@ export default function RootLayout() {
           initialMetrics={initialWindowMetrics}
           style={{ flex: 1, backgroundColor: theme.backgroundColor }}
         >
-          <BottomSheetModalProvider>
-            <ThemeProvider value={navTheme}>
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: theme.backgroundColor },
+          <ThemeProvider value={navTheme}>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: theme.backgroundColor },
+              }}
+            />
+            {!sessionChecked && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  right: 0,
+                  bottom: 0,
+                  left: 0,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  backgroundColor: theme.backgroundColor,
                 }}
-              />
-              {!sessionChecked && (
-                <View
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                    left: 0,
-                    justifyContent: "center",
-                    alignItems: "center",
-                    backgroundColor: theme.backgroundColor,
-                  }}
-                >
-                  <ActivityIndicator size="large" color={theme.primary} />
-                </View>
-              )}
-              <Toast />
-            </ThemeProvider>
-          </BottomSheetModalProvider>
+              >
+                <ActivityIndicator size="large" color={theme.primary} />
+              </View>
+            )}
+            <Toast />
+          </ThemeProvider>
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </>

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
-    "postinstall": "node ./scripts/patch-confetti.js",
+    "postinstall": "patch-package && node ./scripts/patch-confetti.js",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -78,6 +78,7 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.1",
     "expo-module-scripts": "^4.1.7",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "expo": {

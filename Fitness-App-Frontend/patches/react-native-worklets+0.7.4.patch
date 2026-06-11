@@ -1,0 +1,38 @@
+diff --git a/node_modules/react-native-worklets/lib/module/memory/serializable.native.js b/node_modules/react-native-worklets/lib/module/memory/serializable.native.js
+index 274d575..7eb8c03 100644
+--- a/node_modules/react-native-worklets/lib/module/memory/serializable.native.js
++++ b/node_modules/react-native-worklets/lib/module/memory/serializable.native.js
+@@ -517,27 +517,12 @@ function isRemoteFunction(value) {
+  * the UI thread. If the user really wants some objects to be mutable they
+  * should use shared values instead.
+  */
+-function freezeObjectInDev(value) {
+-  if (!__DEV__ || globalThis.__RUNTIME_KIND !== RuntimeKind.ReactNative) {
+-    return;
+-  }
+-  Object.entries(value).forEach(([key, element]) => {
+-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+-    if (!descriptor.configurable) {
+-      return;
+-    }
+-    Object.defineProperty(value, key, {
+-      get() {
+-        return element;
+-      },
+-      set() {
+-        logger.warn(`Tried to modify key \`${key}\` of an object which has been already passed to a worklet. See
+-        https://docs.swmansion.com/react-native-reanimated/docs/guides/troubleshooting#tried-to-modify-key-of-an-object-which-has-been-converted-to-a-serializable
+-        for more details.`);
+-      }
+-    });
+-  });
+-  Object.preventExtensions(value);
++function freezeObjectInDev(_value) {
++  // Patched: converting enum/const objects to non-configurable accessor descriptors
++  // combined with Object.preventExtensions causes "Cannot assign to read-only property"
++  // TypeErrors in Hermes strict mode (iOS). The dev-mode warnings are disabled to keep
++  // @gorhom/bottom-sheet compatible with react-native-worklets.
++  // See: https://github.com/gorhom/react-native-bottom-sheet/issues/2184
+ }
+ function makeShareableCloneOnUIRecursiveLEGACY(value) {
+   'worklet';

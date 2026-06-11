@@ -761,14 +761,14 @@ const s = StyleSheet.create({
     topBarRight: { flexDirection: "row", alignItems: "center", gap: 8 },
     levelBadge: {
         flexDirection: "row", alignItems: "center", gap: 6,
-        backgroundColor: "rgba(170,251,5,0.15)", borderRadius: 20,
+        backgroundColor: "rgba(255,255,255,0.08)", borderRadius: 20,
         paddingHorizontal: 12, paddingVertical: 7,
     },
     levelIconWrap: {
-        width: 20, height: 20, borderRadius: 10,
-        backgroundColor: D.primary, alignItems: "center", justifyContent: "center",
+        width: 22, height: 22, borderRadius: 11,
+        backgroundColor: "rgba(255,255,255,0.12)", alignItems: "center", justifyContent: "center",
     },
-    levelText: { fontSize: 13, fontFamily: theme.bold, color: D.primary },
+    levelText: { fontSize: 13, fontFamily: theme.bold, color: "rgba(255,255,255,0.85)" },
     streakPill: {
         flexDirection: "row", alignItems: "center", gap: 4,
         backgroundColor: "rgba(255,149,0,0.12)", borderRadius: 20,

@@ -6,6 +6,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import ChatbotScreen from "./chatbot/index";
 import WorkoutScreen from "./workout/index";
 import NutritionScreen from "./nutrition/index";
@@ -55,6 +56,7 @@ export default function AppLayout() {
   }
 
   return (
+    <BottomSheetModalProvider>
     <View style={{ flex: 1, flexDirection: isLargeScreen ? "row" : "column", backgroundColor: theme.backgroundColor }}>
       <Tab.Navigator
         initialRouteName={lastActiveTab}
@@ -99,6 +101,7 @@ export default function AppLayout() {
         />
       </Tab.Navigator>
     </View>
+    </BottomSheetModalProvider>
   );
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,11 +10,18 @@ import {
   Easing,
   Image,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import Svg, {
+  Circle as SvgCircle,
+  Ellipse as SvgEllipse,
+  Defs,
+  RadialGradient as SvgRadialGradient,
+  LinearGradient as SvgLinearGradient,
+  Stop,
+} from "react-native-svg";
 import { router } from "expo-router";
 import { theme } from "@/constants/theme";
-import FadeTranslate from "@/components/ui/FadeTranslate";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -29,44 +36,79 @@ const AVATARS = [
 ];
 
 // ── Bubble cloud geometry ─────────────────────────────────────────────────────
-// Two concentric rings rotating in opposite directions. Each bubble is
-// counter-rotated so faces stay upright while orbiting. Ring centers sit near
-// the top of the screen so only the lower arc is visible — a drifting cloud.
-
 interface BubbleCfg {
-  angle: number;       // degrees on the ring
+  angle: number;
   size: number;
   img: any;
   pulseDur: number;
   pulseDelay: number;
 }
+interface RingCfg {
+  radius: number;
+  centerY: number;
+  duration: number;
+  reverse: boolean;
+  enterBase: number;
+  bubbles: BubbleCfg[];
+}
 
-const OUTER_R = SCREEN_W * 0.78;
-const OUTER_CY = SCREEN_H * 0.40 - OUTER_R;   // bottom of arc at 40% screen height
-const INNER_R = SCREEN_W * 0.45;
-const INNER_CY = SCREEN_H * 0.34 - INNER_R;
-
-const OUTER_ANGLES = [8, 26, 43, 60, 79, 95, 113, 130, 148, 165, 184, 200, 218, 236, 253, 270, 288, 305, 322, 340, 356];
-const OUTER_SIZES  = [88, 56, 72, 48, 92, 60, 76, 52, 84, 64, 90, 54, 70, 58, 86, 50, 78, 62, 94, 56, 68];
-const INNER_ANGLES = [12, 41, 75, 102, 134, 162, 195, 224, 251, 282, 311, 343];
-const INNER_SIZES  = [46, 58, 40, 62, 50, 44, 60, 48, 54, 42, 56, 64];
-
-const buildBubbles = (angles: number[], sizes: number[], imgStep: number): BubbleCfg[] =>
-  angles.map((angle, i) => ({
-    angle,
-    size: sizes[i],
+const JITTER = [0, 4, -3, 5, -4, 2];
+const buildBubbles = (sizes: number[], angleOffset: number, imgStep: number): BubbleCfg[] =>
+  sizes.map((size, i) => ({
+    angle: i * (360 / sizes.length) + angleOffset + JITTER[i % JITTER.length],
+    size,
     img: AVATARS[(i * imgStep) % AVATARS.length],
-    pulseDur: 2200 + ((i * 137) % 1800),
+    pulseDur: 2300 + ((i * 137) % 1700),
     pulseDelay: (i * 263) % 1500,
   }));
 
-const OUTER_BUBBLES = buildBubbles(OUTER_ANGLES, OUTER_SIZES, 1);
-const INNER_BUBBLES = buildBubbles(INNER_ANGLES, INNER_SIZES, 3);
+const OUTER_SIZES  = [88, 68, 92, 72, 80, 66, 94, 70, 84, 68, 90, 66, 78, 72, 96, 68, 86, 66, 92, 70, 82, 68, 88, 72];
+const MIDDLE_SIZES = [70, 58, 76, 60, 68, 56, 78, 62, 72, 58, 74, 56, 66, 60, 78, 58, 70, 56, 76, 62, 68, 58, 72, 60];
+const INNER_SIZES  = [58, 48, 64, 50, 60, 46, 66, 52, 62, 48, 64, 46, 56, 50, 68, 48, 60, 46, 64, 52, 58, 48, 62, 50];
 
-// ── Single avatar bubble: gather-in spring + breathing pulse ──────────────────
-function Bubble({
-  cfg, index, dx, dy, enterBase,
-}: {
+const RINGS: RingCfg[] = [
+  { radius: SCREEN_W * 0.78, centerY: SCREEN_H * 0.42 - SCREEN_W * 0.78, duration: 80_000, reverse: false, enterBase: 120, bubbles: buildBubbles(OUTER_SIZES, 0, 1) },
+  { radius: SCREEN_W * 0.70, centerY: SCREEN_H * 0.365 - SCREEN_W * 0.70, duration: 68_000, reverse: true,  enterBase: 260, bubbles: buildBubbles(MIDDLE_SIZES, 7.5, 3) },
+  { radius: SCREEN_W * 0.62, centerY: SCREEN_H * 0.30 - SCREEN_W * 0.62, duration: 58_000, reverse: false, enterBase: 400, bubbles: buildBubbles(INNER_SIZES, 4, 2) },
+];
+
+// ── Glass shader overlay ──────────────────────────────────────────────────────
+function GlassOverlay({ size }: { size: number }) {
+  const r = size / 2;
+  return (
+    <Svg width={size} height={size} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Defs>
+        <SvgRadialGradient id="vig" cx="50%" cy="50%" r="50%">
+          <Stop offset="60%" stopColor="#000" stopOpacity="0" />
+          <Stop offset="86%" stopColor="#000" stopOpacity="0.16" />
+          <Stop offset="100%" stopColor="#000" stopOpacity="0.42" />
+        </SvgRadialGradient>
+        <SvgRadialGradient id="gloss" cx="32%" cy="22%" r="48%">
+          <Stop offset="0%" stopColor="#fff" stopOpacity="0.42" />
+          <Stop offset="55%" stopColor="#fff" stopOpacity="0.1" />
+          <Stop offset="100%" stopColor="#fff" stopOpacity="0" />
+        </SvgRadialGradient>
+        <SvgLinearGradient id="rim" x1="0%" y1="0%" x2="0%" y2="100%">
+          <Stop offset="0%" stopColor="#fff" stopOpacity="0.5" />
+          <Stop offset="45%" stopColor="#fff" stopOpacity="0.08" />
+          <Stop offset="100%" stopColor="#fff" stopOpacity="0.03" />
+        </SvgLinearGradient>
+      </Defs>
+      <SvgCircle cx={r} cy={r} r={r} fill="url(#vig)" />
+      <SvgCircle cx={r} cy={r} r={r} fill="url(#gloss)" />
+      <SvgCircle cx={r} cy={r} r={r - 0.75} stroke="url(#rim)" strokeWidth={1.5} fill="none" />
+      <SvgEllipse
+        cx={size * 0.34} cy={size * 0.2}
+        rx={r * 0.18} ry={r * 0.1}
+        fill="#fff" opacity={0.38}
+        transform={`rotate(-28 ${size * 0.34} ${size * 0.2})`}
+      />
+    </Svg>
+  );
+}
+
+// ── Single avatar bubble ──────────────────────────────────────────────────────
+function Bubble({ cfg, index, dx, dy, enterBase }: {
   cfg: BubbleCfg; index: number; dx: number; dy: number; enterBase: number;
 }) {
   const enter = useRef(new Animated.Value(0)).current;
@@ -74,25 +116,17 @@ function Bubble({
 
   useEffect(() => {
     Animated.sequence([
-      Animated.delay(enterBase + index * 45),
-      Animated.spring(enter, {
-        toValue: 1, friction: 7, tension: 46, useNativeDriver: true,
-      }),
+      Animated.delay(enterBase + index * 30),
+      Animated.spring(enter, { toValue: 1, friction: 7, tension: 46, useNativeDriver: true }),
     ]).start();
 
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 1, duration: cfg.pulseDur,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0, duration: cfg.pulseDur,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
-        }),
+        Animated.timing(pulse, { toValue: 1, duration: cfg.pulseDur, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: cfg.pulseDur, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
       ])
     );
-    const t = setTimeout(() => loop.start(), 1800 + cfg.pulseDelay);
+    const t = setTimeout(() => loop.start(), 1700 + cfg.pulseDelay);
     return () => { clearTimeout(t); loop.stop(); enter.stopAnimation(); };
   }, []);
 
@@ -101,53 +135,37 @@ function Bubble({
       style={{
         width: "100%", height: "100%",
         borderRadius: cfg.size / 2, overflow: "hidden",
-        borderWidth: 1.5, borderColor: "rgba(255,255,255,0.10)",
-        backgroundColor: "#17181A",
-        opacity: enter.interpolate({
-          inputRange: [0, 0.35, 1], outputRange: [0, 1, 1], extrapolate: "clamp",
-        }),
+        backgroundColor: "#141416",
+        opacity: enter.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 1, 1], extrapolate: "clamp" }),
         transform: [
           { translateX: enter.interpolate({ inputRange: [0, 1], outputRange: [dx, 0] }) },
           { translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [dy, 0] }) },
           { scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] }) },
-          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.055] }) },
+          { scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.045] }) },
         ],
       }}
     >
       <Image source={cfg.img} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+      <GlassOverlay size={cfg.size} />
     </Animated.View>
   );
 }
 
-// ── Orbiting ring of bubbles ──────────────────────────────────────────────────
-function OrbitRing({
-  radius, centerY, bubbles, duration, reverse, enterBase,
-}: {
-  radius: number; centerY: number; bubbles: BubbleCfg[];
-  duration: number; reverse: boolean; enterBase: number;
-}) {
+// ── Orbiting ring ─────────────────────────────────────────────────────────────
+function OrbitRing({ ring }: { ring: RingCfg }) {
   const spin = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.timing(spin, {
-        toValue: 1, duration, easing: Easing.linear, useNativeDriver: true,
-      })
+      Animated.timing(spin, { toValue: 1, duration: ring.duration, easing: Easing.linear, useNativeDriver: true })
     );
     loop.start();
     return () => loop.stop();
   }, []);
 
-  const rotate = spin.interpolate({
-    inputRange: [0, 1],
-    outputRange: reverse ? ["0deg", "-360deg"] : ["0deg", "360deg"],
-  });
-  const counter = spin.interpolate({
-    inputRange: [0, 1],
-    outputRange: reverse ? ["0deg", "360deg"] : ["0deg", "-360deg"],
-  });
-
-  const S = (radius + 70) * 2;
+  const rotate  = spin.interpolate({ inputRange: [0, 1], outputRange: ring.reverse ? ["0deg", "-360deg"] : ["0deg", "360deg"] });
+  const counter = spin.interpolate({ inputRange: [0, 1], outputRange: ring.reverse ? ["0deg", "360deg"] : ["0deg", "-360deg"] });
+  const S = (ring.radius + 70) * 2;
 
   return (
     <Animated.View
@@ -156,24 +174,20 @@ function OrbitRing({
         position: "absolute",
         width: S, height: S,
         left: SCREEN_W / 2 - S / 2,
-        top: centerY - S / 2,
+        top: ring.centerY - S / 2,
         transform: [{ rotate }],
       }}
     >
-      {bubbles.map((b, i) => {
+      {ring.bubbles.map((b, i) => {
         const rad = (b.angle * Math.PI) / 180;
-        const left = S / 2 + radius * Math.cos(rad) - b.size / 2;
-        const top = S / 2 + radius * Math.sin(rad) - b.size / 2;
-        // gather from outside-in: scatter radially away from the ring center
-        const dx = Math.cos(rad) * 150;
-        const dy = Math.sin(rad) * 150;
+        const left = S / 2 + ring.radius * Math.cos(rad) - b.size / 2;
+        const top  = S / 2 + ring.radius * Math.sin(rad) - b.size / 2;
+        const dx = Math.cos(rad) * 130;
+        const dy = Math.sin(rad) * 130;
         return (
-          <View
-            key={i}
-            style={{ position: "absolute", left, top, width: b.size, height: b.size }}
-          >
+          <View key={i} style={{ position: "absolute", left, top, width: b.size, height: b.size }}>
             <Animated.View style={{ flex: 1, transform: [{ rotate: counter }] }}>
-              <Bubble cfg={b} index={i} dx={dx} dy={dy} enterBase={enterBase} />
+              <Bubble cfg={b} index={i} dx={dx} dy={dy} enterBase={ring.enterBase} />
             </Animated.View>
           </View>
         );
@@ -185,124 +199,165 @@ function OrbitRing({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function WelcomeScreen() {
-  const logoEnter = useRef(new Animated.Value(0)).current;
-  const logoFloat = useRef(new Animated.Value(0)).current;
+  const insets = useSafeAreaInsets();
 
+  // ── Loading overlay ──────────────────────────────────────────────────────
+  const [overlayActive, setOverlayActive] = useState(true);
+  const loadingOpacity = useRef(new Animated.Value(1)).current;
+  const spinAnim       = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+
+  // ── Dismiss animation ────────────────────────────────────────────────────
+  const dismissAnim = useRef(new Animated.Value(0)).current;
+
+  // ── Mount effects ────────────────────────────────────────────────────────
   useEffect(() => {
-    Animated.sequence([
-      Animated.delay(1250),
-      Animated.spring(logoEnter, {
-        toValue: 1, friction: 6, tension: 60, useNativeDriver: true,
-      }),
-    ]).start();
-
-    const float = Animated.loop(
-      Animated.sequence([
-        Animated.timing(logoFloat, {
-          toValue: 1, duration: 2400,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(logoFloat, {
-          toValue: 0, duration: 2400,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
-        }),
-      ])
+    // Spin the loading arc
+    const spinLoop = Animated.loop(
+      Animated.timing(spinAnim, { toValue: 1, duration: 750, easing: Easing.linear, useNativeDriver: true })
     );
-    const t = setTimeout(() => float.start(), 2100);
-    return () => { clearTimeout(t); float.stop(); };
+    spinLoop.start();
+
+    // After 750ms reveal the content
+    const timer = setTimeout(() => {
+      spinLoop.stop();
+      Animated.parallel([
+        // fade out loader
+        Animated.timing(loadingOpacity, {
+          toValue: 0, duration: 420, easing: Easing.out(Easing.quad), useNativeDriver: true,
+        }),
+        // fade in content (starts slightly after loader starts fading)
+        Animated.timing(contentOpacity, {
+          toValue: 1, duration: 500, delay: 100, easing: Easing.out(Easing.quad), useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) setOverlayActive(false);
+      });
+    }, 750);
+
+    return () => {
+      clearTimeout(timer);
+      spinLoop.stop();
+    };
   }, []);
+
+  // ── Get Started handler ──────────────────────────────────────────────────
+  const handleGetStarted = useCallback(() => {
+    Animated.timing(dismissAnim, {
+      toValue: 1, duration: 560,
+      easing: Easing.in(Easing.quad), useNativeDriver: true,
+    }).start(() => router.push("/Onboarding/Questions/FitnessGoal"));
+  }, []);
+
+  // ── Derived dismiss values ───────────────────────────────────────────────
+  const bubblesOpacity = dismissAnim.interpolate({ inputRange: [0, 0.60, 1], outputRange: [1, 1, 0] });
+  const bubblesScale   = dismissAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.38] });
+  const logoScale      = dismissAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.55] });
+  const logoOpacity    = dismissAnim.interpolate({ inputRange: [0, 0.42, 1], outputRange: [1, 0, 0] });
+  const textOpacity    = dismissAnim.interpolate({ inputRange: [0, 0.46, 1], outputRange: [1, 0, 0] });
+  const textTranslate  = dismissAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -40] });
+  const btnOpacity     = dismissAnim.interpolate({ inputRange: [0, 0.38, 1], outputRange: [1, 0, 0] });
+  const btnScale       = dismissAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.86] });
+
+  const spinInterp = spinAnim.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
 
   return (
     <View style={s.container}>
       <StatusBar barStyle="light-content" />
 
-      {/* ── Avatar bubble cloud ── */}
-      <OrbitRing
-        radius={OUTER_R}
-        centerY={OUTER_CY}
-        bubbles={OUTER_BUBBLES}
-        duration={80_000}
-        reverse={false}
-        enterBase={150}
-      />
-      <OrbitRing
-        radius={INNER_R}
-        centerY={INNER_CY}
-        bubbles={INNER_BUBBLES}
-        duration={65_000}
-        reverse
-        enterBase={350}
-      />
-
-      {/* fade cluster bottom into black */}
-      <LinearGradient
-        colors={["transparent", "rgba(0,0,0,0.85)", "#000"]}
-        pointerEvents="none"
-        style={s.clusterFade}
-      />
-
-      {/* logo bubble anchoring the cloud */}
+      {/* ── Bubble cloud + gradient — all wrapped for dismiss scale ── */}
       <Animated.View
         pointerEvents="none"
         style={[
-          s.logoBubble,
-          {
-            opacity: logoEnter.interpolate({
-              inputRange: [0, 0.4, 1], outputRange: [0, 1, 1], extrapolate: "clamp",
-            }),
-            transform: [
-              { scale: logoEnter.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }) },
-              { translateY: logoFloat.interpolate({ inputRange: [0, 1], outputRange: [0, -5] }) },
-            ],
-          },
+          StyleSheet.absoluteFill,
+          { opacity: bubblesOpacity, transform: [{ scale: bubblesScale }] },
         ]}
       >
-        <Image
-          source={require("@/assets/images/InvictaLogo.png")}
-          style={{ width: 42, height: 42 }}
-          resizeMode="contain"
+        {RINGS.map((ring, i) => <OrbitRing key={i} ring={ring} />)}
+        <LinearGradient
+          colors={["transparent", "rgba(0,0,0,0.88)", "#000"]}
+          style={s.clusterFade}
+          pointerEvents="none"
         />
+      </Animated.View>
+
+      {/* ── Logo ── */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          s.topLogo,
+          { top: insets.top + 10 },
+          { opacity: logoOpacity, transform: [{ scale: logoScale }] },
+        ]}
+      >
+        <Animated.View style={{ opacity: contentOpacity }}>
+          <Image
+            source={require("@/assets/images/InvictaLogo.png")}
+            style={{ width: 44, height: 44 }}
+            resizeMode="contain"
+          />
+        </Animated.View>
       </Animated.View>
 
       {/* ── Content ── */}
       <SafeAreaView style={s.content} edges={["bottom"]}>
-        <View style={s.textBlock}>
-          <FadeTranslate order={1} direction="y" translateYFrom={24}>
-            <Text style={s.title}>Real athletes.{"\n"}Real routines.</Text>
-          </FadeTranslate>
-          <FadeTranslate order={2} direction="y" translateYFrom={20}>
-            <Text style={s.subtitle}>
-              Train with programs built by elite athletes,{"\n"}coaches and creators — made to fit you.
+        {/* Title + subtitle */}
+        <Animated.View
+          style={[
+            s.textBlock,
+            {
+              opacity: Animated.multiply(contentOpacity, textOpacity) as any,
+              transform: [{ translateY: textTranslate }],
+            },
+          ]}
+        >
+          <Text style={s.title}>Built by pros.{"\n"}Made for you.</Text>
+          <Text style={s.subtitle}>
+            Programs from elite coaches and athletes,{"\n"}personalized for your goals.
+          </Text>
+        </Animated.View>
+
+        {/* Buttons */}
+        <Animated.View
+          style={[
+            s.bottomBlock,
+            {
+              opacity: Animated.multiply(contentOpacity, btnOpacity) as any,
+              transform: [{ scale: btnScale }],
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={s.primaryBtn}
+            activeOpacity={0.9}
+            onPress={handleGetStarted}
+          >
+            <Text style={s.primaryBtnText}>Get Started</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity activeOpacity={0.7} onPress={() => router.push("/login")}>
+            <Text style={s.loginText}>
+              Already have an account? <Text style={s.loginHighlight}>Sign In</Text>
             </Text>
-          </FadeTranslate>
-        </View>
+          </TouchableOpacity>
 
-        <View style={s.bottomBlock}>
-          <FadeTranslate order={3} direction="y" translateYFrom={18}>
-            <TouchableOpacity
-              style={s.primaryBtn}
-              activeOpacity={0.9}
-              onPress={() => router.push("/Onboarding/Questions/FitnessGoal")}
-            >
-              <Text style={s.primaryBtnText}>Get Started</Text>
-            </TouchableOpacity>
-          </FadeTranslate>
-
-          <FadeTranslate order={4} direction="y" translateYFrom={14}>
-            <TouchableOpacity activeOpacity={0.7} onPress={() => router.push("/login")}>
-              <Text style={s.loginText}>
-                Already have an account? <Text style={s.loginHighlight}>Sign In</Text>
-              </Text>
-            </TouchableOpacity>
-          </FadeTranslate>
-
-          <FadeTranslate order={5} direction="y" translateYFrom={10}>
-            <Text style={s.termsText}>
-              By continuing, you accept the Terms of Service{"\n"}and Privacy Policy.
-            </Text>
-          </FadeTranslate>
-        </View>
+          <Text style={s.termsText}>
+            By continuing, you accept the Terms of Service{"\n"}and Privacy Policy.
+          </Text>
+        </Animated.View>
       </SafeAreaView>
+
+      {/* ── Loading overlay (always on top while active) ── */}
+      {overlayActive && (
+        <Animated.View
+          style={[StyleSheet.absoluteFill, s.loadingOverlay, { opacity: loadingOpacity }]}
+          pointerEvents="auto"
+        >
+          <Animated.View
+            style={[s.spinner, { transform: [{ rotate: spinInterp }] }]}
+          />
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -313,23 +368,15 @@ const s = StyleSheet.create({
   clusterFade: {
     position: "absolute",
     left: 0, right: 0,
-    top: SCREEN_H * 0.30,
+    top: SCREEN_H * 0.34,
     height: SCREEN_H * 0.20,
   },
 
-  logoBubble: {
+  topLogo: {
     position: "absolute",
-    left: SCREEN_W / 2 - 36,
-    top: SCREEN_H * 0.40 - 36,
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: "#0E0E10",
-    borderWidth: 1.5, borderColor: "rgba(255,255,255,0.14)",
-    justifyContent: "center", alignItems: "center",
-    shadowColor: "#AAFB05",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 18,
-    elevation: 8,
+    left: 0, right: 0,
+    alignItems: "center",
+    zIndex: 10,
   },
 
   content: {
@@ -339,10 +386,10 @@ const s = StyleSheet.create({
     width: "100%",
     maxWidth: 480,
     paddingHorizontal: 28,
-    paddingBottom: 12,
+    paddingBottom: 48,
   },
 
-  textBlock: { alignItems: "center", marginBottom: 40 },
+  textBlock: { alignItems: "center", marginBottom: 42 },
   title: {
     color: "#fff",
     fontFamily: theme.bold,
@@ -350,10 +397,10 @@ const s = StyleSheet.create({
     lineHeight: 44,
     letterSpacing: -0.8,
     textAlign: "center",
-    marginBottom: 16,
+    marginBottom: 14,
   },
   subtitle: {
-    color: "rgba(255,255,255,0.6)",
+    color: "rgba(255,255,255,0.58)",
     fontFamily: theme.medium,
     fontSize: 15,
     lineHeight: 22,
@@ -391,11 +438,24 @@ const s = StyleSheet.create({
     fontFamily: theme.bold,
   },
   termsText: {
-    color: "rgba(255,255,255,0.3)",
+    color: "rgba(255,255,255,0.28)",
     fontSize: 11.5,
     lineHeight: 16,
     fontFamily: theme.regular,
     textAlign: "center",
     marginTop: 2,
+  },
+
+  // Loading overlay
+  loadingOverlay: {
+    backgroundColor: "#000",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  spinner: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.12)",
+    borderTopColor: "rgba(255,255,255,0.72)",
   },
 });
