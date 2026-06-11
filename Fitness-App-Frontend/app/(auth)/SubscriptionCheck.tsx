@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { theme } from '@/constants/theme';
 import Paywall from '@/components/ui/RevenueCat/Paywall';
@@ -23,9 +23,15 @@ export default function SubscriptionCheck() {
   };
 
   useEffect(() => {
+    // RevenueCat is unavailable on web — skip paywall and go straight to the app
+    if (Platform.OS === 'web') {
+      navigateToApp();
+      return;
+    }
+
     if (!loading && !hasChecked && !isNavigating) {
       setHasChecked(true);
-      
+
       if (isPro) {
         // User has PRO, continue to app
         console.log('✅ User has PRO subscription, navigating to workout...');

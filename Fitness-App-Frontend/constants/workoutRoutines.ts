@@ -15,6 +15,11 @@ export interface RoutineExercise {
   expectedCalories?: number;  // kcal burned per set
 }
 
+export interface WorkoutAthlete {
+  name: string;
+  title: string;
+}
+
 export interface WorkoutRoutine {
   id: string;
   name: string;
@@ -25,6 +30,9 @@ export interface WorkoutRoutine {
   targetMuscles: string[];
   equipment: string[];
   gradient: [string, string];
+  image?: string;
+  completions?: number;
+  athlete?: WorkoutAthlete;
   exercises: RoutineExercise[];
 }
 
@@ -42,6 +50,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Full Body", "Cardio"],
     equipment: ["Body weight"],
     gradient: ["#FF6B35", "#C62368"],
+    image: "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?auto=format&fit=crop&w=900&q=80",
+    completions: 12100,
+    athlete: { name: "Chris Heria", title: "Calisthenics World Champion" },
     exercises: [
       { name: "Jumping Jacks", exerciseId: "f9lVSSI", sets: 3, reps: "40", restSeconds: 30, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 50, expectedCalories: 10 },
       { name: "High Knees", exerciseId: "ealLwvX", sets: 3, reps: "30 sec", restSeconds: 30, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/ealLwvX.gif", durationSeconds: 35, expectedCalories: 12 },
@@ -65,6 +76,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Abs", "Obliques"],
     equipment: ["Gym mat", "Body weight"],
     gradient: ["#0093E9", "#80D0C7"],
+    image: "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=900&q=80",
+    completions: 8400,
+    athlete: { name: "Jeff Cavaliere", title: "Physical Therapist & Strength Coach" },
     exercises: [
       { name: "Crunches", exerciseId: "TFqbd8t", sets: 4, reps: "20", restSeconds: 30, category: "Abs", gifUrl: "https://static.exercisedb.dev/media/TFqbd8t.gif", durationSeconds: 45, expectedCalories: 7 },
       { name: "Bicycle Crunches", exerciseId: "tZkGYZ9", sets: 4, reps: "15 each side", restSeconds: 30, category: "Obliques", gifUrl: "https://static.exercisedb.dev/media/tZkGYZ9.gif", durationSeconds: 45, expectedCalories: 8 },
@@ -88,6 +102,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Full Body"],
     equipment: ["Body weight"],
     gradient: ["#FFD200", "#F7971E"],
+    image: "https://images.unsplash.com/photo-1576678927484-cc907957088c?auto=format&fit=crop&w=900&q=80",
+    completions: 15300,
+    athlete: { name: "David Goggins", title: "Navy SEAL & Ultra-Endurance Athlete" },
     exercises: [
       { name: "Jumping Jacks", exerciseId: "f9lVSSI", sets: 2, reps: "30", restSeconds: 30, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 40, expectedCalories: 7 },
       { name: "High Knees", exerciseId: "ealLwvX", sets: 2, reps: "30 sec", restSeconds: 30, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/ealLwvX.gif", durationSeconds: 35, expectedCalories: 8 },
@@ -109,6 +126,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Quads", "Glutes", "Calves"],
     equipment: ["Body weight"],
     gradient: ["#FA8BFF", "#2BD2FF"],
+    image: "https://images.unsplash.com/photo-1434608519344-49d77a699e1d?auto=format&fit=crop&w=900&q=80",
+    completions: 5200,
+    athlete: { name: "Kayla Itsines", title: "Fitness Entrepreneur & BBG Creator" },
     exercises: [
       { name: "Jumping Jacks (Warm-Up)", exerciseId: "f9lVSSI", sets: 2, reps: "30", restSeconds: 20, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 40, expectedCalories: 6 },
       { name: "Walking Lunges", exerciseId: "IZVHb27", sets: 4, reps: "12 each leg", restSeconds: 45, category: "Legs", gifUrl: "https://static.exercisedb.dev/media/IZVHb27.gif", durationSeconds: 55, expectedCalories: 10 },
@@ -131,6 +151,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Shoulders", "Chest", "Arms"],
     equipment: ["Dumbbell"],
     gradient: ["#4158D0", "#C850C0"],
+    image: "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=900&q=80",
+    completions: 9800,
+    athlete: { name: "Arnold Schwarzenegger", title: "7× Mr. Olympia Champion" },
     exercises: [
       { name: "Incline Dumbbell Press", exerciseId: "ns0SIbU", sets: 4, reps: "10-12", restSeconds: 60, category: "Chest", gifUrl: "https://static.exercisedb.dev/media/ns0SIbU.gif", durationSeconds: 45, expectedCalories: 11 },
       { name: "Dumbbell Shoulder Press", exerciseId: "A6wtbuL", sets: 4, reps: "10", restSeconds: 60, category: "Shoulders", gifUrl: "https://static.exercisedb.dev/media/A6wtbuL.gif", durationSeconds: 45, expectedCalories: 11 },
@@ -153,6 +176,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Full Body"],
     equipment: ["Barbell", "Dumbbell", "Bench"],
     gradient: ["#FF416C", "#FF4B2B"],
+    image: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=900&q=80",
+    completions: 21000,
+    athlete: { name: "Cristiano Ronaldo", title: "5× Ballon d'Or Winner" },
     exercises: [
       { name: "Barbell Bench Press", exerciseId: "EIeI8Vf", sets: 4, reps: "8-10", restSeconds: 90, category: "Chest", gifUrl: "https://static.exercisedb.dev/media/EIeI8Vf.gif", durationSeconds: 50, expectedCalories: 12 },
       { name: "Dumbbell Deadlift", exerciseId: "nUwVh7b", sets: 4, reps: "10", restSeconds: 90, category: "Back", gifUrl: "https://static.exercisedb.dev/media/nUwVh7b.gif", durationSeconds: 55, expectedCalories: 14 },
@@ -176,6 +202,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Cardio"],
     equipment: ["Cardio Machine", "Body weight"],
     gradient: ["#00B4DB", "#0083B0"],
+    image: "https://images.unsplash.com/photo-1538805060514-97d9cc17730c?auto=format&fit=crop&w=900&q=80",
+    completions: 7600,
+    athlete: { name: "Joe Wicks", title: "The Body Coach — HIIT Pioneer" },
     exercises: [
       { name: "Incline Treadmill", exerciseId: "rjiM4L3", sets: 1, reps: "10 min", restSeconds: 60, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/rjiM4L3.gif", durationSeconds: 600, expectedCalories: 90 },
       { name: "Jumping Jacks", exerciseId: "f9lVSSI", sets: 3, reps: "40", restSeconds: 30, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 50, expectedCalories: 10 },
@@ -197,6 +226,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Full Body", "Cardio"],
     equipment: ["Body weight"],
     gradient: ["#FDC830", "#F37335"],
+    image: "https://images.unsplash.com/photo-1541534741688-6078c6bfb5c5?auto=format&fit=crop&w=900&q=80",
+    completions: 18200,
+    athlete: { name: "Usain Bolt", title: "8× Olympic Gold Medalist" },
     exercises: [
       { name: "Jumping Jacks (Warm-Up)", exerciseId: "f9lVSSI", sets: 2, reps: "30 sec", restSeconds: 20, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 35, expectedCalories: 8 },
       { name: "High Knees", exerciseId: "ealLwvX", sets: 4, reps: "30 sec", restSeconds: 15, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/ealLwvX.gif", durationSeconds: 35, expectedCalories: 13 },
@@ -219,6 +251,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Chest", "Shoulders", "Arms"],
     equipment: ["Dumbbell"],
     gradient: ["#3a7bd5", "#3a6073"],
+    image: "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=900&q=80",
+    completions: 11400,
+    athlete: { name: "Ronnie Coleman", title: "8× Mr. Olympia Champion" },
     exercises: [
       { name: "Incline Dumbbell Press", exerciseId: "ns0SIbU", sets: 4, reps: "10-12", restSeconds: 60, category: "Chest", gifUrl: "https://static.exercisedb.dev/media/ns0SIbU.gif", durationSeconds: 45, expectedCalories: 11 },
       { name: "Dumbbell Pullover", exerciseId: "FSD6PGL", sets: 3, reps: "12", restSeconds: 60, category: "Chest", gifUrl: "https://static.exercisedb.dev/media/FSD6PGL.gif", durationSeconds: 45, expectedCalories: 9 },
@@ -242,6 +277,9 @@ export const ROUTINES: WorkoutRoutine[] = [
     targetMuscles: ["Legs", "Glutes", "Calves"],
     equipment: ["Dumbbell", "Body weight"],
     gradient: ["#11998e", "#38ef7d"],
+    image: "https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?auto=format&fit=crop&w=900&q=80",
+    completions: 6900,
+    athlete: { name: "Kelsey Wells", title: "PWR Training Creator" },
     exercises: [
       { name: "Jumping Jacks (Warm-Up)", exerciseId: "f9lVSSI", sets: 2, reps: "30", restSeconds: 20, category: "Cardio", gifUrl: "https://static.exercisedb.dev/media/f9lVSSI.gif", durationSeconds: 40, expectedCalories: 6 },
       { name: "Dumbbell Deadlift", exerciseId: "nUwVh7b", sets: 4, reps: "10-12", restSeconds: 90, category: "Legs", gifUrl: "https://static.exercisedb.dev/media/nUwVh7b.gif", durationSeconds: 55, expectedCalories: 14 },

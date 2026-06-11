@@ -308,7 +308,10 @@ export const Login = async (
   userData: { email: string; password: string }
 ): Promise<{ token: string }> => {
   try {
-    const response = await axiosInstance.post<{ token: string }>('/api/User/Login', userData);
+    const response = await axiosInstance.post<{ token: string }>('/api/User/Login', {
+      Email: userData.email,
+      Password: userData.password,
+    });
     const { token } = response.data;
     return { token };
   } catch (error) {

@@ -24,6 +24,8 @@ import { BlurView } from "expo-blur";
 import { theme } from "../../constants/theme";
 import WorkoutComplete from "../../components/ui/WorkoutComplete";
 import { LikedExercise } from "../../models/LikedExercise";
+import { WorkoutLog } from "../../models/WorkoutLog";
+import { getUserIdFromToken } from "../../api/TokenDecoder";
 import database from "../../database/database";
 import ConfettiCannon from "react-native-confetti-cannon";
 
@@ -437,6 +439,23 @@ export default function WorkoutPlayer() {
     // Check if this is the last set of the last exercise
     if (currentIndex >= exercises.length - 1 && currentSet >= currentExercise.sets) {
       setPhase("complete");
+      // Persist the workout log
+      const totalCalories = exercises.reduce(
+        (sum, ex) => sum + (ex.expectedCalories ?? 0) * ex.sets, 0
+      );
+      getUserIdFromToken().then((userId) => {
+        if (userId && routine) {
+          database.write(() =>
+            WorkoutLog.logWorkout(database, {
+              userId,
+              routineId:       routine.id,
+              routineName:     routine.name,
+              durationSeconds: totalElapsed,
+              caloriesBurned:  totalCalories,
+            })
+          ).catch(() => {});
+        }
+      }).catch(() => {});
       return;
     }
 

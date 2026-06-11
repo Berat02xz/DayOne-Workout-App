@@ -18,7 +18,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Toast from "react-native-toast-message";
-import BlurredBackground from "@/components/ui/BlurredBackground";
 import FadeTranslate from "@/components/ui/FadeTranslate";
 
 const { width } = Dimensions.get("window");
@@ -36,6 +35,10 @@ const C = {
 };
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+    backgroundColor: C.bg,
+  },
   container: {
     flex: 1,
     alignItems: 'center',
@@ -125,18 +128,18 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   loginButton: {
-    backgroundColor: C.primary,
+    backgroundColor: '#FFFFFF',
     borderRadius: 30,
-    height: 54,
+    height: 56,
     width: width - 48,
     maxWidth: 400,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: C.primary,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowColor: '#FFFFFF',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
   },
   loginButtonDisabled: {
     opacity: 0.6,
@@ -160,8 +163,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   signupTextHighlight: {
-    color: C.primary,
-    fontFamily: theme.medium,
+    color: '#FFFFFF',
+    fontFamily: theme.bold,
   },
 });
 
@@ -272,7 +275,7 @@ export const LoginScreen = () => {
   }
 
   return (
-    <BlurredBackground intensity={100} circleBlur={50} animationSpeed={1.5}>
+    <View style={styles.screen}>
       <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
         <View style={styles.contentWrapper}>
         {/* Header + Form centered */}
@@ -341,7 +344,8 @@ export const LoginScreen = () => {
           </FadeTranslate>
         </View>
 
-        </View> {/* end centerSection */}
+        {/* end centerSection */}
+        </View>
 
         {/* Bottom Section */}
         <View style={styles.bottomSection}>
@@ -375,9 +379,10 @@ export const LoginScreen = () => {
           </FadeTranslate>
         </View>
 
-        </View> {/* end contentWrapper */}
+        {/* end contentWrapper */}
+        </View>
       </SafeAreaView>
-    </BlurredBackground>
+    </View>
   );
 };
 

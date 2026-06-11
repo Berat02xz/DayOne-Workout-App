@@ -376,7 +376,7 @@ export default function Profile() {
                     <TouchableOpacity 
                       style={s.levelBadge}
                       activeOpacity={0.8}
-                      onPress={() => router.push("/Roadmap")}
+                      onPress={() => router.push("/Analytics")}
                     >
                         <View style={s.levelIconWrap}>
                             <Text style={{ fontSize: 12 }}>🔥</Text>

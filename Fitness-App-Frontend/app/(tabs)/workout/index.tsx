@@ -1,528 +1,788 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { router } from "expo-router";
 import {
   View,
   Text,
+  TextInput,
   TouchableOpacity,
   ScrollView,
   Image,
   Dimensions,
-  ActivityIndicator,
   StatusBar,
-  StyleSheet
+  StyleSheet,
+  ActivityIndicator,
+  Animated,
+  Easing,
+  LayoutAnimation,
+  Platform,
+  UIManager,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/constants/theme";
 import FadeTranslate from "@/components/ui/FadeTranslate";
-import {
-  ROUTINES,
-  type WorkoutRoutine,
-} from "@/constants/workoutRoutines";
+import { ROUTINES, type WorkoutRoutine } from "@/constants/workoutRoutines";
 import { ExerciseApi, type ExerciseInfo } from "@/api/ExerciseApi";
+import { User } from "@/models/User";
+import database from "@/database/database";
+
+if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const { width: SCREEN_W } = Dimensions.get("window");
-const ROUTINE_EQUIPMENT_PILLS = ["Barbell", "Dumbbell", "Gym mat", "Pull-up bar", "Bench"];
+const H_PAD = 20;
+const FEATURED_W = SCREEN_W - H_PAD * 2;
+const FEATURED_H = FEATURED_W * 0.98;
+const CARD_W = SCREEN_W - H_PAD * 2;
+const CARD_H = CARD_W * 0.72;
+const MAX_RESULTS = 30;
 
-const titleCase = (str: string) =>
-  str.replace(/\b\w/g, (c) => c.toUpperCase());
+const AVATARS = [
+  require("@/assets/avatars/avatar1.jpg"),
+  require("@/assets/avatars/avatar2.jpg"),
+  require("@/assets/avatars/avatar3.jpg"),
+  require("@/assets/avatars/avatar4.jpg"),
+  require("@/assets/avatars/avatar5.jpg"),
+  require("@/assets/avatars/avatar6.jpg"),
+  require("@/assets/avatars/avatar7.jpg"),
+];
+
+const FEATURED_IDS = ["core_30day", "quick_hiit", "full_body_gym"];
+const FILTER_PILLS = ["All", "Strength", "HIIT", "Core", "Cardio"];
+
+const formatCount = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : `${n}`;
+
+const capitalize = (str: string) =>
+  str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+
+const matchesFilter = (r: WorkoutRoutine, pill: string) => {
+  if (pill === "All") return true;
+  const muscles = r.targetMuscles.map((m) => m.toLowerCase());
+  const name = r.name.toLowerCase();
+  switch (pill) {
+    case "Strength":
+      return muscles.some((m) =>
+        ["chest", "shoulders", "arms", "legs", "glutes", "quads", "calves"].includes(m)
+      );
+    case "HIIT":
+      return name.includes("hiit") || (muscles.includes("cardio") && muscles.includes("full body"));
+    case "Core":
+      return muscles.some((m) => ["abs", "obliques", "core"].includes(m));
+    case "Cardio":
+      return muscles.includes("cardio");
+    default:
+      return true;
+  }
+};
 
 export default function Workout() {
   const insets = useSafeAreaInsets();
-  
-  const [selectedRoutineFilter, setSelectedRoutineFilter] = useState("All");
-  const [baseRoutines, setBaseRoutines] = useState(ROUTINES);
-  
-  const [exercisePool, setExercisePool] = useState<ExerciseInfo[]>([]);
-  const [exercisesLoading, setExercisesLoading] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState("");
 
-  const apiExercises = useMemo(() => {
-    return exercisePool.slice(0, 15);
-  }, [exercisePool]);
+  const [userName, setUserName] = useState("");
+  const [greeting, setGreeting] = useState("Good Morning");
+  const [search, setSearch] = useState("");
+  const [activeFilter, setActiveFilter] = useState("All");
+  const [featuredIndex, setFeaturedIndex] = useState(0);
 
+  // Exercise pool — loaded from DB cache, or downloaded once on first launch
+  const [exPool, setExPool] = useState<ExerciseInfo[]>([]);
+  const [poolReady, setPoolReady] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(0.4)).current;
+
+  const isSearching = search.trim().length > 0;
+  const isCaching = !poolReady;
+
+  // Greeting + local user name
+  useEffect(() => {
+    (async () => {
+      try {
+        const u = await User.getUserDetails(database);
+        if (u?.name) setUserName(u.name.split(" ")[0]);
+      } catch {}
+    })();
+    const h = new Date().getHours();
+    if (h < 5) setGreeting("Good Night");
+    else if (h < 12) setGreeting("Good Morning");
+    else if (h < 18) setGreeting("Good Afternoon");
+    else setGreeting("Good Evening");
+  }, []);
+
+  // Warm the exercise cache on open — instant if DB already has it
   useEffect(() => {
     let cancelled = false;
-    setExercisesLoading(true);
-
-    const unsubProgress = ExerciseApi.onProgress((msg) => {
-      if (!cancelled) setLoadingMessage(msg);
+    const unsub = ExerciseApi.onExercises((exercises) => {
+      if (!cancelled) setExPool(exercises);
     });
-
-    const unsubExercises = ExerciseApi.onExercises((exercises) => {
-      if (!cancelled) setExercisePool(exercises);
-    });
-
-    ExerciseApi.getAllExercises().then(() => {
-      if (!cancelled) setExercisesLoading(false);
-    });
-    setBaseRoutines([...ROUTINES].sort(() => Math.random() - 0.5));
+    ExerciseApi.getAllExercises()
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setPoolReady(true);
+      });
     return () => {
       cancelled = true;
-      unsubProgress();
-      unsubExercises();
+      unsub();
     };
   }, []);
 
-  const handleRoutinePress = (routine: WorkoutRoutine) => {
+  // Pulsing "Caching exercises..." placeholder
+  useEffect(() => {
+    if (!isCaching) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.9, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.4, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isCaching]);
+
+  const featured = useMemo(
+    () => FEATURED_IDS.map((id) => ROUTINES.find((r) => r.id === id)).filter(Boolean) as WorkoutRoutine[],
+    []
+  );
+
+  const popular = useMemo(() => {
+    let list = ROUTINES.filter((r) => !FEATURED_IDS.includes(r.id));
+    if (activeFilter !== "All") list = list.filter((r) => matchesFilter(r, activeFilter));
+    return [...list].sort((a, b) => (b.completions ?? 0) - (a.completions ?? 0));
+  }, [activeFilter]);
+
+  // Exercise search over the cached pool — works progressively while caching
+  const exerciseResults = useMemo(() => {
+    if (!isSearching) return [];
+    const q = search.trim().toLowerCase();
+    const seen = new Set<string>();
+    const out: ExerciseInfo[] = [];
+    for (const ex of exPool) {
+      if (seen.has(ex.exerciseId)) continue;
+      const hit =
+        ex.name.toLowerCase().includes(q) ||
+        ex.targetMuscles.some((m) => m.toLowerCase().includes(q)) ||
+        ex.equipments.some((e) => e.toLowerCase().includes(q)) ||
+        ex.bodyParts.some((b) => b.toLowerCase().includes(q));
+      if (hit) {
+        seen.add(ex.exerciseId);
+        out.push(ex);
+        if (out.length >= MAX_RESULTS) break;
+      }
+    }
+    return out;
+  }, [isSearching, search, exPool]);
+
+  const handleSearchChange = useCallback((text: string) => {
+    const wasSearching = search.trim().length > 0;
+    const willSearch = text.trim().length > 0;
+    if (wasSearching !== willSearch) {
+      LayoutAnimation.configureNext(LayoutAnimation.create(260, "easeInEaseOut", "opacity"));
+    }
+    setSearch(text);
+  }, [search]);
+
+  const openRoutine = (routine: WorkoutRoutine) => {
+    router.push({ pathname: "/RoutineDetail", params: { routineId: routine.id } });
+  };
+
+  const openExercise = (exercise: ExerciseInfo) => {
     router.push({
-      pathname: "/RoutineDetail",
-      params: { routineId: routine.id },
+      pathname: "/ExerciseDetail",
+      params: {
+        exerciseId: exercise.exerciseId,
+        name: exercise.name,
+        sets: "3",
+        reps: "12",
+        restSeconds: "60",
+        category: exercise.targetMuscles?.[0] ?? exercise.bodyParts?.[0] ?? "Strength",
+        gifUrl: exercise.gifUrl ?? "",
+      },
     });
   };
 
-  const parseDuration = (d: string) => parseInt(d.replace(/[^0-9]/g, ""), 10) || 0;
-
-  const routineFilterPills = [
-    "All",
-    "Beginner", "Intermediate", "Advanced",
-    "< 30 min", "45+ min",
-    ...ROUTINE_EQUIPMENT_PILLS,
-  ];
-
-  const filteredRoutines = useMemo(() => {
-    if (selectedRoutineFilter === "All") return baseRoutines;
-    return baseRoutines.filter((r) => {
-      if (["Beginner", "Intermediate", "Advanced"].includes(selectedRoutineFilter)) {
-        return r.difficulty === selectedRoutineFilter;
-      }
-      const mins = parseDuration(r.duration);
-      if (selectedRoutineFilter === "< 30 min") return mins < 30;
-      if (selectedRoutineFilter === "45+ min") return mins >= 45;
-      return r.equipment.some(
-        (eq) => eq.toLowerCase() === selectedRoutineFilter.toLowerCase()
-      );
-    });
-  }, [selectedRoutineFilter, baseRoutines]);
-
-  const totalCoins = 200;
+  const onFeaturedScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const i = Math.round(e.nativeEvent.contentOffset.x / (FEATURED_W + 12));
+    if (i !== featuredIndex) setFeaturedIndex(i);
+  };
 
   return (
     <View style={s.container}>
       <StatusBar barStyle="light-content" />
-      
-      <Image
-        source={require("@/assets/icons/backgrounds/TopBackground.png")}
-        style={s.topBgImage}
-        resizeMode="cover"
-      />
-      <LinearGradient colors={["transparent", "#000"]} style={s.topBgGradient} />
 
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={[
-          s.scrollContent,
-          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 110 },
-        ]}
+        contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        <FadeTranslate order={0} direction="y" translateYFrom={-24} delay={0}>
+        {/* ── Header ── */}
+        <FadeTranslate order={0} direction="y" translateYFrom={-16}>
           <View style={s.headerRow}>
-            <View style={s.headerLeft}>
-              <Text style={s.quoteTitle}>BUILT{"\n"}DIFFERENT</Text>
-              <Text style={s.quoteSub}>Train like you mean it</Text>
+            <View>
+              <Text style={s.greeting}>{greeting}</Text>
+              <Text style={s.userName}>{userName || "Athlete"} 👋</Text>
             </View>
-            <View style={s.headerRight}>
-              <TouchableOpacity 
-                style={s.coinBadge} 
-                activeOpacity={0.8}
-                onPress={() => router.push("/Roadmap")}
-              >
-                <View style={s.coinIconWrap}>
-                   <Text style={{ fontSize: 10 }}>💰</Text>
-                </View>
-                <Text style={s.coinText}>{totalCoins}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          <View style={s.searchBarWrap}>
-            <TouchableOpacity activeOpacity={0.8} style={s.searchBar} onPress={() => router.push("/ExerciseList")}>
-              <Ionicons name="search" size={18} color="#888" />
-              <Text style={s.searchText}>Search workout</Text>
+            <TouchableOpacity
+              style={s.analyticsBtn}
+              activeOpacity={0.8}
+              onPress={() => router.push("/Analytics")}
+            >
+              <Ionicons name="stats-chart" size={18} color={D.primary} />
             </TouchableOpacity>
           </View>
         </FadeTranslate>
 
-        <FadeTranslate order={0} delay={400} direction="y" translateYFrom={16}>
-          <Text style={s.sectionTitle}>Workout Routines</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.chipScroll}
-          >
-            {routineFilterPills.map((pill, i) => (
+        {/* ── Search ── */}
+        <FadeTranslate order={0} delay={80} direction="y" translateYFrom={14}>
+          <View style={s.searchBar}>
+            {isCaching ? (
+              <ActivityIndicator size="small" color={D.primary} />
+            ) : (
+              <Ionicons name="search" size={18} color="rgba(255,255,255,0.4)" />
+            )}
+            <View style={s.searchInputWrap}>
+              <TextInput
+                style={s.searchInput}
+                placeholder={isCaching ? "" : "Search workouts, exercises..."}
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                value={search}
+                onChangeText={handleSearchChange}
+                returnKeyType="search"
+                autoCorrect={false}
+                selectionColor={D.primary}
+              />
+              {isCaching && search.length === 0 && (
+                <Animated.Text
+                  pointerEvents="none"
+                  style={[s.cachingPlaceholder, { opacity: pulseAnim }]}
+                  numberOfLines={1}
+                >
+                  Caching exercises, please wait...
+                </Animated.Text>
+              )}
+            </View>
+            {search.length > 0 ? (
               <TouchableOpacity
-                key={i}
-                activeOpacity={0.8}
-                onPress={() => setSelectedRoutineFilter(pill)}
-                style={[
-                  s.chip,
-                  selectedRoutineFilter === pill && s.chipActive,
-                ]}
+                onPress={() => handleSearchChange("")}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Text
-                  style={[
-                    s.chipText,
-                    selectedRoutineFilter === pill && s.chipTextActive,
-                  ]}
-                >
-                  {pill}
-                </Text>
+                <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+            ) : (
+              <Ionicons name="options-outline" size={18} color="rgba(255,255,255,0.55)" />
+            )}
+          </View>
+        </FadeTranslate>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={s.routinesWheelRow}
-            snapToInterval={SCREEN_W * 0.72 + 16}
-            decelerationRate="fast"
-          >
-            {filteredRoutines.map((routine, idx) => {
-              const cardBg = routine.gradient || ["#2A2A2A", "#000000"];
-              let isLight = false;
-              try {
-                const hex = cardBg[0].replace("#", "");
-                const r = parseInt(hex.substring(0, 2), 16);
-                const g = parseInt(hex.substring(2, 2), 16);
-                const b = parseInt(hex.substring(4, 2), 16);
-                const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
-                isLight = yiq >= 150; // Threshold for dark text
-              } catch (e) {}
+        {isSearching ? (
+          /* ══ Search results ══ */
+          <View style={s.resultsWrap}>
+            {exPool.length === 0 ? (
+              <View style={s.emptyState}>
+                <ActivityIndicator size="large" color={D.primary} />
+                <Text style={s.emptyText}>
+                  {isCaching ? "Building your exercise library..." : "Loading exercises..."}
+                </Text>
+              </View>
+            ) : exerciseResults.length === 0 ? (
+              <FadeTranslate order={0}>
+                <View style={s.emptyState}>
+                  <View style={s.emptyIconWrap}>
+                    <Ionicons name="barbell-outline" size={34} color={D.sub} />
+                  </View>
+                  <Text style={s.emptyTitle}>No exercises found</Text>
+                  <Text style={s.emptyText}>Try a different name, muscle or equipment.</Text>
+                </View>
+              </FadeTranslate>
+            ) : (
+              <>
+                <FadeTranslate order={0} direction="y" translateYFrom={-10}>
+                  <Text style={s.resultsCount}>
+                    {exerciseResults.length === MAX_RESULTS
+                      ? `Top ${MAX_RESULTS} results`
+                      : `${exerciseResults.length} exercise${exerciseResults.length !== 1 ? "s" : ""}`}
+                  </Text>
+                </FadeTranslate>
 
-              return (
-                <FadeTranslate
-                  key={`routine-${routine.id}`}
-                  direction="x"
-                  translateXFrom={60}
-                  delay={100}
-                  order={idx * 0.1}
-                >
+                <View style={s.resultsList}>
+                  {exerciseResults.map((exercise, index) => {
+                    const focus = exercise.targetMuscles?.[0] ?? exercise.bodyParts?.[0] ?? "Strength";
+                    const equipment = exercise.equipments?.[0]
+                      ? capitalize(exercise.equipments[0])
+                      : "Bodyweight";
+                    return (
+                      <FadeTranslate
+                        key={exercise.exerciseId}
+                        direction="y"
+                        translateYFrom={24}
+                        delay={40}
+                        order={Math.min(index, 10) * 0.04}
+                      >
+                        <TouchableOpacity
+                          style={s.exerciseRow}
+                          activeOpacity={0.75}
+                          onPress={() => openExercise(exercise)}
+                        >
+                          <View style={s.exerciseThumbWrap}>
+                            {exercise.gifUrl ? (
+                              <Image
+                                source={{ uri: exercise.gifUrl }}
+                                style={s.exerciseThumb}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <Ionicons name="barbell-outline" size={24} color={D.sub} />
+                            )}
+                          </View>
+                          <View style={s.exerciseInfo}>
+                            <Text style={s.exerciseName} numberOfLines={2}>
+                              {capitalize(exercise.name)}
+                            </Text>
+                            <View style={s.exercisePillRow}>
+                              <View style={s.exercisePill}>
+                                <Text style={s.exercisePillText}>{capitalize(focus)}</Text>
+                              </View>
+                              <View style={s.exercisePill}>
+                                <Ionicons name="barbell" size={10} color="rgba(255,255,255,0.45)" />
+                                <Text style={s.exercisePillText}>{equipment}</Text>
+                              </View>
+                            </View>
+                          </View>
+                          <Ionicons name="chevron-forward" size={17} color="rgba(255,255,255,0.3)" />
+                        </TouchableOpacity>
+                      </FadeTranslate>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+          </View>
+        ) : (
+          /* ══ Browse: pills + featured + popular ══ */
+          <>
+            {/* ── Filter pills ── */}
+            <FadeTranslate order={0} delay={140} direction="y" translateYFrom={12}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.pillScroll}
+              >
+                {FILTER_PILLS.map((pill) => {
+                  const active = activeFilter === pill;
+                  return (
+                    <TouchableOpacity
+                      key={pill}
+                      activeOpacity={0.85}
+                      onPress={() => setActiveFilter(pill)}
+                      style={[s.pill, active && s.pillActive]}
+                    >
+                      <Text style={[s.pillText, active && s.pillTextActive]}>{pill}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </FadeTranslate>
+
+            {/* ── Featured carousel ── */}
+            <FadeTranslate order={0} delay={200} direction="y" translateYFrom={20}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                snapToInterval={FEATURED_W + 12}
+                decelerationRate="fast"
+                onScroll={onFeaturedScroll}
+                scrollEventThrottle={16}
+                contentContainerStyle={s.featuredScroll}
+              >
+                {featured.map((routine) => (
                   <TouchableOpacity
-                    style={[s.routineCardLarge, { overflow: "hidden" }]}
-                    activeOpacity={0.9}
-                    onPress={() => handleRoutinePress(routine)}
+                    key={routine.id}
+                    activeOpacity={0.95}
+                    onPress={() => openRoutine(routine)}
+                    style={s.featuredCard}
                   >
+                    {routine.image ? (
+                      <Image
+                        source={{ uri: routine.image }}
+                        style={StyleSheet.absoluteFillObject}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+                    {/* dark wash, heavier on the left so text reads */}
                     <LinearGradient
-                      colors={cardBg}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
+                      colors={["rgba(6,10,0,0.97)", "rgba(6,10,0,0.72)", "rgba(6,10,0,0.18)"]}
+                      locations={[0, 0.45, 1]}
+                      start={{ x: 0, y: 0.5 }}
+                      end={{ x: 1, y: 0.5 }}
                       style={StyleSheet.absoluteFillObject}
                     />
-                    <View style={s.routineLargeInner}>
-                      <View style={s.routineTopBadges}>
-                        <View style={s.badgePill}>
-                          <Text style={s.badgeText}>{routine.difficulty}</Text>
-                        </View>
-                        <View style={s.badgePill}>
-                          <Text style={s.badgeText}>{routine.duration}</Text>
+                    <LinearGradient
+                      colors={["transparent", "rgba(6,10,0,0.55)"]}
+                      locations={[0.55, 1]}
+                      style={StyleSheet.absoluteFillObject}
+                    />
+
+                    <View style={s.featuredContent}>
+                      <View>
+                        <Text style={s.featuredEyebrow}>FEATURED ROUTINE</Text>
+                        <Text style={s.featuredTitle}>{routine.name.toUpperCase()}</Text>
+                        <Text style={s.featuredAthlete}>by {routine.athlete?.name}</Text>
+
+                        <View style={s.featuredPills}>
+                          <View style={s.metaPill}>
+                            <Text style={s.metaPillText}>{routine.duration.toUpperCase()}</Text>
+                          </View>
+                          <View style={s.metaPill}>
+                            <Text style={s.metaPillText}>{routine.difficulty.toUpperCase()}</Text>
+                          </View>
                         </View>
                       </View>
-                      <View style={s.routineMainContent}>
-                        <Text
-                          style={[
-                            s.routineLargeTitle,
-                            isLight && { color: "#000" },
-                          ]}
-                        >
-                          {routine.name}
-                        </Text>
-                        <Text
-                          style={[
-                            s.routineLargeSub,
-                            isLight && { color: "rgba(0,0,0,0.8)" },
-                          ]}
-                        >
-                          {routine.exercises.length} Exercises • {routine.equipment.join(", ")}
-                        </Text>
-                      </View>
-                      <View style={s.routinePlayWrap}>
-                        <View
-                          style={[
-                            s.routinePlayBtn,
-                            isLight && { backgroundColor: "#fff" },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              s.routinePlayText,
-                              isLight && { color: "#000" },
-                            ]}
-                          >
-                            Start Routine
-                          </Text>
-                          <Ionicons
-                            name="play"
-                            size={16}
-                            color={isLight ? "#000" : "#fff"}
-                          />
-                        </View>
+
+                      <View style={s.startBtn}>
+                        <Text style={s.startBtnText}>Start Routine</Text>
+                        <Ionicons name="play" size={14} color="#000" />
                       </View>
                     </View>
                   </TouchableOpacity>
-                </FadeTranslate>
-              );
-            })}
-          </ScrollView>
-        </FadeTranslate>
+                ))}
+              </ScrollView>
 
-        <FadeTranslate order={0} delay={600} direction="y" translateYFrom={-16}>
-          <View style={s.sectionHeaderRowInline}>
-            <Text style={s.sectionTitleInline}>Featured Workouts</Text>
-            <TouchableOpacity onPress={() => router.push("/ExerciseList")}>
-               <Text style={s.seeAllText}>View more</Text>
-            </TouchableOpacity>
-          </View>
+              {/* dots */}
+              <View style={s.dotsRow}>
+                {featured.map((_, i) => (
+                  <View key={i} style={[s.dot, i === featuredIndex && s.dotActive]} />
+                ))}
+              </View>
+            </FadeTranslate>
 
-          {exercisesLoading && apiExercises.length === 0 ? (
-            <View style={{ alignItems: "center", marginTop: 40, gap: 12 }}>
-              <ActivityIndicator color="#AAFB05" />
-              {loadingMessage ? (
-                <Text style={{ color: "#888", fontSize: 14 }}>{loadingMessage}</Text>
-              ) : null}
-            </View>
-          ) : apiExercises.length === 0 ? (
-            <Text style={s.emptyText}>No exercises found.</Text>
-          ) : (
-            <>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.albumCoverScroll}
-            >
-               {apiExercises.map((ex, exIdx) => {
-                 const bodyPart = ex.bodyParts[0] ?? "";
-                 return (
-                   <FadeTranslate key={ex.exerciseId} direction="x" translateXFrom={60} delay={500} order={exIdx * 0.12}>
-                   <TouchableOpacity
-                     style={s.albumCard}
-                     activeOpacity={0.8}
-                     onPress={() => router.push({ pathname: "/ExerciseDetail", params: { exerciseId: ex.exerciseId } })}
-                   >
-                     <View style={s.albumArtWrap}>
-                       {ex.gifUrl ? (
-                         <Image source={{uri: ex.gifUrl}} style={s.albumArt} />
-                         ) : (
-                           <Ionicons name="barbell" size={40} color="#333" />
-                         )}
+            {/* ── Popular workouts ── */}
+            <FadeTranslate order={0} delay={260} direction="y" translateYFrom={16}>
+              <View style={s.sectionRow}>
+                <Text style={s.sectionTitle}>Popular Workouts</Text>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => setActiveFilter("All")}>
+                  <Text style={s.seeAll}>See all</Text>
+                </TouchableOpacity>
+              </View>
+            </FadeTranslate>
+
+            <View style={s.feedList}>
+              {popular.map((routine, idx) => {
+                const av0 = AVATARS[(idx * 3 + 0) % AVATARS.length];
+                const av1 = AVATARS[(idx * 3 + 1) % AVATARS.length];
+                const av2 = AVATARS[(idx * 3 + 2) % AVATARS.length];
+                const infoAv = AVATARS[(idx + 4) % AVATARS.length];
+                const athlete = routine.athlete;
+                const diffColor =
+                  routine.difficulty === "Beginner"     ? "#34C759" :
+                  routine.difficulty === "Intermediate" ? "#FF9500" : "#FF3B30";
+
+                return (
+                  <FadeTranslate
+                    key={routine.id}
+                    direction="y"
+                    translateYFrom={36}
+                    delay={300}
+                    order={Math.min(idx, 4) * 0.1}
+                  >
+                    <TouchableOpacity activeOpacity={0.96} onPress={() => openRoutine(routine)}>
+                      {/* photo card */}
+                      <View style={s.feedCard}>
+                        <LinearGradient
+                          colors={routine.gradient}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={StyleSheet.absoluteFillObject}
+                        />
+                        {routine.image ? (
+                          <Image
+                            source={{ uri: routine.image }}
+                            style={StyleSheet.absoluteFillObject}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        <LinearGradient
+                          colors={["rgba(0,0,0,0.4)", "transparent", "rgba(0,0,0,0.62)"]}
+                          locations={[0, 0.42, 1]}
+                          style={StyleSheet.absoluteFillObject}
+                        />
+
+                        {/* athlete attribution pill */}
+                        <View style={s.creatorPill}>
+                          <Image source={infoAv} style={s.creatorAvatar} />
+                          <View>
+                            <Text style={s.creatorByLine}>Routine by</Text>
+                            <Text style={s.creatorName} numberOfLines={1}>
+                              {athlete?.name ?? routine.name}
+                            </Text>
+                          </View>
+                        </View>
+
+                        {/* bottom overlay */}
+                        <View style={s.cardBottom}>
+                          <View style={s.cardStatRow}>
+                            <View style={s.cardStat}>
+                              <Ionicons name="heart" size={15} color="#FF3B5C" />
+                              <Text style={s.cardStatText}>{formatCount(routine.completions ?? 0)}</Text>
+                            </View>
+                            <View style={s.cardStat}>
+                              <Ionicons name="barbell-outline" size={14} color="rgba(255,255,255,0.8)" />
+                              <Text style={s.cardStatText}>{routine.exercises.length} exercises</Text>
+                            </View>
+                          </View>
+                          <View style={s.avatarStack}>
+                            <Image source={av2} style={[s.stackAv, { zIndex: 1 }]} />
+                            <Image source={av1} style={[s.stackAv, { zIndex: 2, marginLeft: -11 }]} />
+                            <Image source={av0} style={[s.stackAv, { zIndex: 3, marginLeft: -11 }]} />
+                          </View>
+                        </View>
                       </View>
-                      <Text style={s.albumTitle} numberOfLines={1}>{titleCase(ex.name)}</Text>
-                      <Text style={s.albumSub} numberOfLines={1}>{ex.equipments[0] ?? bodyPart}</Text>
-                   </TouchableOpacity>
-                   </FadeTranslate>
-                 );
-               })}
-            </ScrollView>
-            </>
-          )}
-        </FadeTranslate>
 
+                      {/* compact info row */}
+                      <View style={s.feedInfo}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.feedInfoName}>{routine.name}</Text>
+                          <Text style={s.feedInfoMeta} numberOfLines={1}>
+                            {routine.duration} · {routine.targetMuscles[0]} ·{" "}
+                            <Text style={{ color: diffColor }}>{routine.difficulty}</Text>
+                          </Text>
+                        </View>
+                        <View style={s.goBtn}>
+                          <Ionicons name="chevron-forward" size={16} color="#000" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  </FadeTranslate>
+                );
+              })}
 
-
+              {popular.length === 0 && (
+                <Text style={s.emptyText}>No workouts match this filter.</Text>
+              )}
+            </View>
+          </>
+        )}
       </ScrollView>
     </View>
   );
 }
 
+// ── Design tokens ─────────────────────────────────────────────────────────────
 const D = {
-  bg: "#000000",
+  bg:      "#000",
   primary: "#AAFB05",
-  primaryDim: "rgba(170,251,5,0.15)",
-  text: "#FFFFFF",
-  sub: "#666666",
-  muted: "#333333",
-  card: "#121212",
-  cardAlt: "#1C1C1E",
-  border: "#2A2A2A",
+  text:    "#fff",
+  sub:     "#8E8E93",
 };
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: D.bg },
-  topBgImage: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    width: Dimensions.get("window").width,
-    height: Dimensions.get("window").height,
-    opacity: 0.4,
-  },
-  topBgGradient: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: Dimensions.get("window").height,
-  },
   scroll: { flex: 1 },
-  scrollContent: {},
+
+  // Header
   headerRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    marginBottom: 20,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: H_PAD, marginBottom: 20,
   },
-  headerLeft: { flex: 1 },
-  quoteTitle: {
-    color: "#fff",
-    fontFamily: theme.bold,
-    fontSize: 28,
-    lineHeight: 34,
-    textTransform: "uppercase",
+  greeting: { color: "rgba(255,255,255,0.55)", fontFamily: theme.medium, fontSize: 14 },
+  userName: { color: D.text, fontFamily: theme.bold, fontSize: 26, letterSpacing: -0.4, marginTop: 2 },
+  analyticsBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: "rgba(170,251,5,0.12)",
+    borderWidth: 1, borderColor: "rgba(170,251,5,0.3)",
+    justifyContent: "center", alignItems: "center",
   },
-  quoteSub: {
-    color: "rgba(255,255,255,0.8)",
-    fontFamily: theme.medium,
-    fontSize: 14,
-    marginTop: 6,
-  },
-  headerRight: { justifyContent: "center" },
-  coinBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 6,
-  },
-  coinIconWrap: {
-    width: 20,
-    height: 20,
-    backgroundColor: "#FFD700",
-    borderRadius: 10,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  coinText: { color: "#000", fontFamily: theme.bold, fontSize: 14 },
-  searchBarWrap: { paddingHorizontal: 20, marginBottom: 28 },
+
+  // Search
   searchBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.05)",
-    paddingHorizontal: 16,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    flexDirection: "row", alignItems: "center", gap: 10,
+    marginHorizontal: H_PAD, marginBottom: 16,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+    borderRadius: 16, paddingHorizontal: 14, height: 48,
   },
-  searchText: {
-    color: "#888",
-    fontFamily: theme.medium,
-    fontSize: 15,
-    marginLeft: 10,
+  searchInputWrap: { flex: 1, justifyContent: "center" },
+  searchInput: {
+    color: D.text,
+    fontFamily: theme.medium, fontSize: 14,
+    paddingVertical: 0,
   },
-  sectionTitle: {
-    color: "#fff",
-    fontFamily: theme.bold,
-    fontSize: 18,
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  chipScroll: { paddingHorizontal: 20, marginBottom: 16, gap: 8 },
-  chip: {
-    backgroundColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-  },
-  chipActive: { backgroundColor: D.primary },
-  chipText: { color: "#fff", fontFamily: theme.medium, fontSize: 14 },
-  chipTextActive: { color: "#000", fontFamily: theme.bold },
-  emptyText: {
-    color: D.sub,
-    fontFamily: theme.medium,
-    paddingHorizontal: 20,
-    marginBottom: 24,
-  },
-  routinesWheelRow: { paddingHorizontal: 20, paddingBottom: 32 },
-  routineCardLarge: {
-    width: SCREEN_W * 0.72,
-    height: 380,
-    marginRight: 16,
-    borderRadius: 32,
-    overflow: "hidden",
-  },
-  routineLargeInner: {
-    flex: 1,
-    padding: 24,
-    justifyContent: "space-between",
-  },
-  routineTopBadges: { flexDirection: "row", gap: 8, marginBottom: 16 },
-  badgePill: {
-    backgroundColor: "rgba(0,0,0,0.4)",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  badgeText: {
-    color: "#fff",
-    fontFamily: theme.bold,
-    fontSize: 12,
-    textTransform: "uppercase",
-  },
-  routineMainContent: {
-    flex: 1,
-    justifyContent: "flex-end",
-    paddingBottom: 24,
-  },
-  routineLargeTitle: {
-    color: "#fff",
-    fontFamily: theme.bold,
-    fontSize: 34,
-    lineHeight: 38,
-    textTransform: "uppercase",
-    marginBottom: 10,
-  },
-  routineLargeSub: {
-    color: "rgba(255,255,255,0.9)",
-    fontFamily: theme.medium,
-    fontSize: 15,
-  },
-  routinePlayWrap: { alignItems: "flex-start" },
-  routinePlayBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#000",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
-    gap: 8,
-  },
-  routinePlayText: { color: "#fff", fontFamily: theme.bold, fontSize: 16 },
-  sectionHeaderRowInline: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingRight: 24,
-    marginBottom: 16,
-  },
-  sectionTitleInline: { color: "#fff", fontFamily: theme.bold, fontSize: 18 },
-  seeAllText: {
+  cachingPlaceholder: {
+    position: "absolute", left: 0, right: 0,
     color: D.primary,
-    fontFamily: theme.medium,
-    fontSize: 13,
-    textDecorationLine: "underline",
+    fontFamily: theme.medium, fontSize: 14,
   },
-  albumCoverScroll: { paddingHorizontal: 20, paddingBottom: 20 },
-  albumCard: { width: 140, marginRight: 16 },
-  albumArtWrap: {
-    width: 140,
-    height: 140,
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderRadius: 20,
-    marginBottom: 10,
-    justifyContent: "center",
-    alignItems: "center",
+
+  // Search results
+  resultsWrap: { paddingHorizontal: H_PAD, paddingTop: 4 },
+  resultsCount: {
+    color: "rgba(255,255,255,0.5)", fontFamily: theme.medium,
+    fontSize: 12.5, letterSpacing: 0.3, marginBottom: 14,
+  },
+  resultsList: { gap: 12 },
+  exerciseRow: {
+    flexDirection: "row", alignItems: "center", gap: 13,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
+    borderRadius: 18, padding: 10, paddingRight: 14,
+  },
+  exerciseThumbWrap: {
+    width: 64, height: 64, borderRadius: 14,
+    backgroundColor: "#111",
     overflow: "hidden",
+    justifyContent: "center", alignItems: "center",
   },
-  albumArt: { width: "100%", height: "100%", backgroundColor: "#1C1C1E" },
-  albumTitle: { color: "#fff", fontFamily: theme.bold, fontSize: 14, marginBottom: 2 },
-  albumSub: { color: D.sub, fontFamily: theme.medium, fontSize: 13 },
+  exerciseThumb: { width: "100%", height: "100%" },
+  exerciseInfo: { flex: 1, gap: 7 },
+  exerciseName: {
+    color: D.text, fontFamily: theme.bold,
+    fontSize: 14.5, lineHeight: 19,
+  },
+  exercisePillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  exercisePill: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8,
+  },
+  exercisePillText: {
+    color: "rgba(255,255,255,0.55)",
+    fontFamily: theme.medium, fontSize: 10.5,
+  },
+  emptyState: { alignItems: "center", paddingVertical: 48, gap: 14 },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: "rgba(255,255,255,0.05)",
+    justifyContent: "center", alignItems: "center",
+  },
+  emptyTitle: { color: D.text, fontFamily: theme.bold, fontSize: 17 },
+
+  // Filter pills
+  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 20, gap: 8 },
+  pill: {
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+    paddingHorizontal: 18, paddingVertical: 9, borderRadius: 21,
+  },
+  pillActive: { backgroundColor: D.primary, borderColor: D.primary },
+  pillText: { color: "rgba(255,255,255,0.85)", fontFamily: theme.medium, fontSize: 13.5 },
+  pillTextActive: { color: "#000", fontFamily: theme.bold },
+
+  // Featured carousel
+  featuredScroll: { paddingHorizontal: H_PAD, gap: 12 },
+  featuredCard: {
+    width: FEATURED_W, height: FEATURED_H,
+    borderRadius: 28, overflow: "hidden",
+    backgroundColor: "#0A1200",
+    borderWidth: 1, borderColor: "rgba(170,251,5,0.22)",
+  },
+  featuredContent: {
+    flex: 1, padding: 22,
+    justifyContent: "space-between",
+  },
+  featuredEyebrow: {
+    color: D.primary, fontFamily: theme.bold, fontSize: 11,
+    letterSpacing: 1.6, marginBottom: 10,
+  },
+  featuredTitle: {
+    color: D.text, fontFamily: theme.black ?? theme.bold, fontSize: 30,
+    lineHeight: 35, letterSpacing: -0.5, maxWidth: FEATURED_W * 0.72,
+  },
+  featuredAthlete: {
+    color: "rgba(255,255,255,0.65)", fontFamily: theme.medium, fontSize: 13.5,
+    marginTop: 8,
+  },
+  featuredPills: { flexDirection: "row", gap: 8, marginTop: 16 },
+  metaPill: {
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.22)",
+    borderRadius: 15, paddingHorizontal: 13, paddingVertical: 6,
+  },
+  metaPillText: {
+    color: "rgba(255,255,255,0.85)", fontFamily: theme.bold,
+    fontSize: 10.5, letterSpacing: 0.8,
+  },
+  startBtn: {
+    alignSelf: "flex-start",
+    flexDirection: "row", alignItems: "center", gap: 8,
+    backgroundColor: D.primary,
+    borderRadius: 26, paddingHorizontal: 24, paddingVertical: 14,
+  },
+  startBtnText: { color: "#000", fontFamily: theme.bold, fontSize: 15 },
+
+  dotsRow: {
+    flexDirection: "row", justifyContent: "center", gap: 6,
+    marginTop: 14, marginBottom: 26,
+  },
+  dot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  dotActive: { backgroundColor: D.primary, width: 18 },
+
+  // Section header
+  sectionRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: H_PAD, marginBottom: 16,
+  },
+  sectionTitle: { color: D.text, fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.3 },
+  seeAll: { color: D.primary, fontFamily: theme.medium, fontSize: 13.5 },
+
+  // Feed cards
+  feedList: { paddingHorizontal: H_PAD, gap: 26 },
+  feedCard: {
+    width: CARD_W, height: CARD_H,
+    borderRadius: 24, overflow: "hidden",
+    justifyContent: "space-between", padding: 14,
+  },
+  creatorPill: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(0,0,0,0.48)",
+    borderRadius: 24, paddingRight: 13, paddingVertical: 5, paddingLeft: 5,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
+  },
+  creatorAvatar: {
+    width: 28, height: 28, borderRadius: 14,
+    borderWidth: 1.5, borderColor: "rgba(255,255,255,0.55)",
+  },
+  creatorByLine: {
+    color: "rgba(255,255,255,0.55)", fontFamily: theme.medium,
+    fontSize: 9, letterSpacing: 0.4, textTransform: "uppercase",
+  },
+  creatorName: { color: "#fff", fontFamily: theme.bold, fontSize: 12, maxWidth: CARD_W * 0.5 },
+
+  cardBottom: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
+  cardStatRow: { flexDirection: "row", gap: 14 },
+  cardStat: { flexDirection: "row", alignItems: "center", gap: 5 },
+  cardStatText: {
+    color: "#fff", fontFamily: theme.bold, fontSize: 13.5,
+    textShadowColor: "rgba(0,0,0,0.6)",
+    textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
+  },
+  avatarStack: { flexDirection: "row", alignItems: "center" },
+  stackAv: {
+    width: 30, height: 30, borderRadius: 15,
+    borderWidth: 2.5, borderColor: "#000",
+  },
+
+  // compact info under card
+  feedInfo: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingHorizontal: 4, paddingTop: 12,
+  },
+  feedInfoName: { color: D.text, fontFamily: theme.bold, fontSize: 15.5, letterSpacing: -0.2 },
+  feedInfoMeta: { color: D.sub, fontFamily: theme.medium, fontSize: 12.5, marginTop: 2 },
+  goBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: D.primary,
+    justifyContent: "center", alignItems: "center",
+  },
+
+  emptyText: {
+    color: D.sub, fontFamily: theme.medium, fontSize: 14,
+    textAlign: "center",
+  },
 });

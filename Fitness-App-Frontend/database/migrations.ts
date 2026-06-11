@@ -62,6 +62,22 @@ export const migrations = schemaMigrations({
       ],
     },
     {
+      toVersion: 15,
+      steps: [
+        createTable({
+          name: 'workout_logs',
+          columns: [
+            { name: 'user_id',          type: 'string', isIndexed: true },
+            { name: 'routine_id',       type: 'string' },
+            { name: 'routine_name',     type: 'string' },
+            { name: 'completed_at',     type: 'number', isIndexed: true },
+            { name: 'duration_seconds', type: 'number' },
+            { name: 'calories_burned',  type: 'number' },
+          ],
+        }),
+      ],
+    },
+    {
       toVersion: 14,
       steps: [
         createTable({

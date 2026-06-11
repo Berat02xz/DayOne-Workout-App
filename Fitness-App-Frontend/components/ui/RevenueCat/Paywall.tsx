@@ -44,16 +44,16 @@ export const Paywall: React.FC<PaywallProps> = ({
       const offerings = await RevenueCatService.getOfferings();
       
       if (!offerings || !offerings.availablePackages || offerings.availablePackages.length === 0) {
-        console.error('❌ No offerings or packages found');
-        console.error('📋 Offerings object:', JSON.stringify(offerings, null, 2));
-        
-        Toast.show({
-          type: 'error',
-          text1: 'Setup Required',
-          text2: 'Please configure offerings in RevenueCat Dashboard',
-          visibilityTime: 5000,
-        });
-        
+        // null offerings on web/Expo Go means RevenueCat isn't supported — not a config error
+        if (offerings !== null) {
+          console.error('❌ No offerings or packages found — configure offerings in RevenueCat Dashboard');
+          Toast.show({
+            type: 'error',
+            text1: 'Setup Required',
+            text2: 'Please configure offerings in RevenueCat Dashboard',
+            visibilityTime: 5000,
+          });
+        }
         onClose();
         return;
       }

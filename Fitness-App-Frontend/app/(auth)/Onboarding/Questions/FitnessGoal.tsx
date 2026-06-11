@@ -24,7 +24,6 @@ const FitnessGoalScreen = () => {
 
   return (
     <>
-      {" "}
       <SolidBackground />
       <View style={styles.outerContainer}>
         <View style={styles.container}>
