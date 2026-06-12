@@ -20,10 +20,12 @@ import {
   NativeScrollEvent,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/constants/theme";
 import FadeTranslate from "@/components/ui/FadeTranslate";
+import { SquircleFrame } from "@/components/ui/Squircle";
 import { ROUTINES, type WorkoutRoutine } from "@/constants/workoutRoutines";
 import { ExerciseApi, type ExerciseInfo } from "@/api/ExerciseApi";
 import { User } from "@/models/User";
@@ -35,12 +37,12 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const H_PAD = 20;
-const FEATURED_W = SCREEN_W - H_PAD * 2;
-const FEATURED_H = FEATURED_W * 0.78;   // ~20% shorter than before
 const CARD_W = SCREEN_W - H_PAD * 2;
-const CARD_H = CARD_W * 0.72;
-const ITEM_H = CARD_H + 82;             // feedCard + feedInfo (~58px) + gap (26px) approx
+const CARD_H = CARD_W * 0.98;           // tall cards like the reference UI
+const CARD_RADIUS = 38;
+const ITEM_H = CARD_H + 18;             // card + feed gap
 const MAX_RESULTS = 30;
+const MODE_SEG_W = 66;                  // width of each half of the Home/Gym toggle
 
 const AVATARS = [
   require("@/assets/avatars/avatar1.jpg"),
@@ -52,12 +54,6 @@ const AVATARS = [
   require("@/assets/avatars/avatar7.jpg"),
 ];
 
-// Local images for featured routines that have them
-const FEATURED_LOCAL: Record<string, any> = {
-  core_30day: require("@/assets/images/workouts/core-30-day.png"),
-  quick_hiit:  require("@/assets/images/workouts/quick-hiit.png"),
-};
-
 const FEATURED_IDS = ["core_30day", "quick_hiit", "full_body_gym"];
 const FILTER_PILLS = ["All", "Strength", "HIIT", "Core", "Cardio"];
 
@@ -67,13 +63,16 @@ const formatCount = (n: number) =>
 const capitalize = (str: string) =>
   str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
 
+const diffColor = (d: string) =>
+  d === "Beginner" ? "#34C759" : d === "Intermediate" ? "#FF9500" : "#FF5C5C";
+
 const matchesFilter = (r: WorkoutRoutine, pill: string) => {
   if (pill === "All") return true;
   const muscles = r.targetMuscles.map((m) => m.toLowerCase());
   const name = r.name.toLowerCase();
   switch (pill) {
     case "Strength":
-      return muscles.some((m) => ["chest","shoulders","arms","legs","glutes","quads","calves"].includes(m));
+      return muscles.some((m) => ["chest","shoulders","arms","legs","glutes","quads","calves","full body"].includes(m));
     case "HIIT":
       return name.includes("hiit") || (muscles.includes("cardio") && muscles.includes("full body"));
     case "Core":
@@ -85,6 +84,11 @@ const matchesFilter = (r: WorkoutRoutine, pill: string) => {
   }
 };
 
+// Home = doable with no equipment (bodyweight / mat); Gym = needs actual gear
+const HOME_GEAR = ["body weight", "gym mat", "no equipment"];
+const isGymRoutine = (r: WorkoutRoutine) =>
+  r.equipment.some((e) => !HOME_GEAR.includes(e.toLowerCase()));
+
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const D = {
   bg:      "#000",
@@ -93,8 +97,8 @@ const D = {
   sub:     "#8E8E93",
 };
 
-// ── PopularCard (outside Workout to avoid recreation) ─────────────────────────
-const PopularCard = React.memo(function PopularCard({
+// ── RoutineCard (outside Workout to avoid recreation) ─────────────────────────
+const RoutineCard = React.memo(function RoutineCard({
   routine, idx, isFocused, onPress,
 }: {
   routine: WorkoutRoutine;
@@ -105,20 +109,13 @@ const PopularCard = React.memo(function PopularCard({
   const av0 = AVATARS[(idx * 3 + 0) % AVATARS.length];
   const av1 = AVATARS[(idx * 3 + 1) % AVATARS.length];
   const av2 = AVATARS[(idx * 3 + 2) % AVATARS.length];
-  const infoAv = AVATARS[(idx + 4) % AVATARS.length];
-  const athlete = routine.athlete;
-  const diffColor =
-    routine.difficulty === "Beginner"     ? "#34C759" :
-    routine.difficulty === "Intermediate" ? "#FF9500" : "#FF3B30";
+  const isFeatured = FEATURED_IDS.includes(routine.id);
 
-  // creator pill text width — useNativeDriver: false
-  const creatorAnim = useRef(new Animated.Value(0)).current;
   // avatar bubble-in — useNativeDriver: true (scale + opacity)
   const av2Anim = useRef(new Animated.Value(0)).current;
   const av1Anim = useRef(new Animated.Value(0)).current;
   const av0Anim = useRef(new Animated.Value(0)).current;
-  // heart pulse — useNativeDriver: true
-  const heartAnim = useRef(new Animated.Value(1)).current;
+  const countAnim = useRef(new Animated.Value(0)).current;
   const mountedRef = useRef(false);
 
   useEffect(() => {
@@ -128,50 +125,35 @@ const PopularCard = React.memo(function PopularCard({
 
     if (isFocused) {
       timer = setTimeout(() => {
-        Animated.timing(creatorAnim, {
-          toValue: 1, duration: 500,
-          easing: Easing.out(Easing.quad), useNativeDriver: false,
-        }).start();
-        Animated.stagger(120, [
+        Animated.stagger(110, [
           Animated.spring(av2Anim, { toValue: 1, friction: 9, tension: 70, useNativeDriver: true }),
           Animated.spring(av1Anim, { toValue: 1, friction: 9, tension: 70, useNativeDriver: true }),
           Animated.spring(av0Anim, { toValue: 1, friction: 9, tension: 70, useNativeDriver: true }),
+          Animated.spring(countAnim, { toValue: 1, friction: 9, tension: 70, useNativeDriver: true }),
         ]).start();
       }, isMount ? 480 : 0);
     } else {
-      Animated.timing(creatorAnim, {
-        toValue: 0, duration: 280,
-        easing: Easing.in(Easing.quad), useNativeDriver: false,
-      }).start();
       Animated.parallel([
         Animated.timing(av0Anim, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(av1Anim, { toValue: 0, duration: 150, useNativeDriver: true }),
         Animated.timing(av2Anim, { toValue: 0, duration: 150, useNativeDriver: true }),
+        Animated.timing(countAnim, { toValue: 0, duration: 150, useNativeDriver: true }),
       ]).start();
     }
 
     return () => clearTimeout(timer);
   }, [isFocused]);
 
-  const pulseHeart = useCallback(() => {
-    Animated.sequence([
-      Animated.spring(heartAnim, { toValue: 1.55, friction: 3, tension: 450, useNativeDriver: true }),
-      Animated.spring(heartAnim, { toValue: 1, friction: 5, tension: 180, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  const textWidth   = creatorAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 105] });
-  const textOpacity = creatorAnim.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0, 1] });
-
   const av2Scale = av2Anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
   const av1Scale = av1Anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
   const av0Scale = av0Anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
+  const countScale = countAnim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
 
   return (
     <FadeTranslate direction="y" translateYFrom={36} delay={300} order={Math.min(idx, 4) * 0.1}>
       <TouchableOpacity activeOpacity={0.96} onPress={() => onPress(routine.id)}>
-        {/* photo card */}
-        <View style={s.feedCard}>
+        <View style={s.card}>
+          {/* photo */}
           <LinearGradient
             colors={routine.gradient}
             start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
@@ -184,72 +166,81 @@ const PopularCard = React.memo(function PopularCard({
               resizeMode="cover"
             />
           ) : null}
+          {/* darken top-left so the headline reads, like the price in the reference */}
           <LinearGradient
-            colors={["rgba(0,0,0,0.4)", "transparent", "rgba(0,0,0,0.62)"]}
-            locations={[0, 0.42, 1]}
+            colors={["rgba(0,0,0,0.62)", "rgba(0,0,0,0.18)", "rgba(0,0,0,0.02)"]}
+            locations={[0, 0.36, 0.62]}
             style={StyleSheet.absoluteFill}
           />
 
-          {/* animated creator pill */}
-          <View style={s.creatorPill}>
-            <Image source={infoAv} style={s.creatorAvatar} />
-            <Animated.View style={{ width: textWidth, overflow: "hidden" }}>
-              <Animated.View
-                style={{
-                  opacity: textOpacity,
-                  paddingLeft: 6, paddingRight: 8,
-                  width: 105,
-                }}
-              >
-                <Text style={s.creatorByLine} numberOfLines={1}>Routine by</Text>
-                <Text style={s.creatorName} numberOfLines={1}>
-                  {athlete?.name ?? routine.name}
+          {/* top row — duration headline + star circle */}
+          <View style={s.cardTopRow}>
+            <View>
+              <View style={s.cardTimeRow}>
+                <Text style={s.cardTime}>{routine.duration}</Text>
+                <Text style={[s.cardDiff, { color: diffColor(routine.difficulty) }]}>
+                  {routine.difficulty}
                 </Text>
-              </Animated.View>
-            </Animated.View>
-          </View>
+              </View>
 
-          {/* bottom overlay */}
-          <View style={s.cardBottom}>
-            <View style={s.cardStatRow}>
-              <TouchableOpacity activeOpacity={0.7} onPress={pulseHeart} style={s.cardStat}>
-                <Animated.View style={{ transform: [{ scale: heartAnim }] }}>
-                  <Ionicons name="heart" size={15} color="#FF3B5C" />
+              <View style={s.avatarRow}>
+                <Animated.View style={{ opacity: av2Anim, transform: [{ scale: av2Scale }] }}>
+                  <Image source={av2} style={s.stackAv} />
                 </Animated.View>
-                <Text style={s.cardStatText}>{formatCount(routine.completions ?? 0)}</Text>
-              </TouchableOpacity>
-              <View style={s.cardStat}>
-                <Ionicons name="barbell-outline" size={14} color="rgba(255,255,255,0.8)" />
-                <Text style={s.cardStatText}>{routine.exercises.length} exercises</Text>
+                <Animated.View style={{ opacity: av1Anim, transform: [{ scale: av1Scale }], marginLeft: -9 }}>
+                  <Image source={av1} style={s.stackAv} />
+                </Animated.View>
+                <Animated.View style={{ opacity: av0Anim, transform: [{ scale: av0Scale }], marginLeft: -9 }}>
+                  <Image source={av0} style={s.stackAv} />
+                </Animated.View>
+                <Animated.View style={[s.countPill, { opacity: countAnim, transform: [{ scale: countScale }] }]}>
+                  <Text style={s.countPillText}>+{formatCount(routine.completions ?? 0)}</Text>
+                </Animated.View>
               </View>
             </View>
 
-            <View style={s.avatarStack}>
-              <Animated.View style={{ opacity: av2Anim, transform: [{ scale: av2Scale }] }}>
-                <Image source={av2} style={[s.stackAv, { zIndex: 1 }]} />
-              </Animated.View>
-              <Animated.View style={{ opacity: av1Anim, transform: [{ scale: av1Scale }], marginLeft: -11 }}>
-                <Image source={av1} style={[s.stackAv, { zIndex: 2 }]} />
-              </Animated.View>
-              <Animated.View style={{ opacity: av0Anim, transform: [{ scale: av0Scale }], marginLeft: -11 }}>
-                <Image source={av0} style={[s.stackAv, { zIndex: 3 }]} />
-              </Animated.View>
+            <View style={[s.starCircle, isFeatured && s.starCircleFeatured]}>
+              <Ionicons
+                name={isFeatured ? "star" : "star-outline"}
+                size={15}
+                color={isFeatured ? "#000" : "#fff"}
+              />
             </View>
           </View>
-        </View>
 
-        {/* compact info row */}
-        <View style={s.feedInfo}>
-          <View style={{ flex: 1 }}>
-            <Text style={s.feedInfoName}>{routine.name}</Text>
-            <Text style={s.feedInfoMeta} numberOfLines={1}>
-              {routine.duration} · {routine.targetMuscles[0]} ·{" "}
-              <Text style={{ color: diffColor }}>{routine.difficulty}</Text>
-            </Text>
+          {/* frosted glass bar — name + routine by + arrow */}
+          <View style={s.glassBarWrap}>
+            <BlurView
+              experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
+              intensity={Platform.OS === "ios" ? 40 : 30}
+              tint="dark"
+              style={s.glassBar}
+            >
+              <View style={s.glassTextCol}>
+                <Text style={s.glassTitle} numberOfLines={1}>{routine.name}</Text>
+                <Text style={s.glassSub} numberOfLines={1}>
+                  Routine by {routine.athlete?.name ?? "Invicta"} • {routine.exercises.length} exercises
+                </Text>
+              </View>
+              <View style={s.arrowCircle}>
+                <Ionicons
+                  name="arrow-forward"
+                  size={18}
+                  color="#000"
+                  style={{ transform: [{ rotate: "-45deg" }] }}
+                />
+              </View>
+            </BlurView>
           </View>
-          <View style={s.goBtn}>
-            <Ionicons name="play" size={13} color="#000" />
-          </View>
+
+          {/* squircle corners */}
+          <SquircleFrame
+            width={CARD_W}
+            height={CARD_H}
+            cornerRadius={CARD_RADIUS}
+            color={D.bg}
+            strokeColor="rgba(255,255,255,0.07)"
+          />
         </View>
       </TouchableOpacity>
     </FadeTranslate>
@@ -262,19 +253,14 @@ export default function Workout() {
   const insets = useSafeAreaInsets();
 
   const [userName, setUserName] = useState("");
-  const [greeting, setGreeting] = useState("Good Morning");
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
-  const [featuredIndex, setFeaturedIndex] = useState(0);
   const [focusedCard, setFocusedCard] = useState(0);
+  // Home vs Gym — defaulted from the onboarding equipment answer
+  const [workoutMode, setWorkoutMode] = useState<"home" | "gym">("home");
 
   const scrollYRef = useRef(0);
   const feedListYRef = useRef(0);
-  const featuredScrollRef = useRef<ScrollView>(null);
-  const dotAnim0 = useRef(new Animated.Value(1)).current;
-  const dotAnim1 = useRef(new Animated.Value(0)).current;
-  const dotAnim2 = useRef(new Animated.Value(0)).current;
-  const autoPlayRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Exercise pool — loaded from DB cache, or downloaded once on first launch
   const [exPool, setExPool] = useState<ExerciseInfo[]>([]);
@@ -284,19 +270,17 @@ export default function Workout() {
   const isSearching = search.trim().length > 0;
   const isCaching = !poolReady;
 
-  // Greeting + local user name
+  // Local user name + default workout mode from onboarding equipment answer
   useEffect(() => {
     (async () => {
       try {
         const u = await User.getUserDetails(database);
         if (u?.name) setUserName(u.name.split(" ")[0]);
+        // "Home Workouts" → home; "Basic Equipment" / "Gym Access" → gym
+        // (equipment routines — dumbbells etc. — live on the gym side)
+        if (u?.equipmentAccess && u.equipmentAccess !== "Home Workouts") setWorkoutMode("gym");
       } catch {}
     })();
-    const h = new Date().getHours();
-    if (h < 5)       setGreeting("Good Night");
-    else if (h < 12) setGreeting("Good Morning");
-    else if (h < 18) setGreeting("Good Afternoon");
-    else             setGreeting("Good Evening");
   }, []);
 
   // Warm the exercise cache on open — instant if DB already has it
@@ -324,41 +308,41 @@ export default function Workout() {
     return () => loop.stop();
   }, [isCaching]);
 
-  // Reset focus when filter changes
-  useEffect(() => { setFocusedCard(0); }, [activeFilter]);
-
-  const featured = useMemo(
-    () => FEATURED_IDS.map((id) => ROUTINES.find((r) => r.id === id)).filter(Boolean) as WorkoutRoutine[],
-    []
-  );
-
-  const popular = useMemo(() => {
-    let list = ROUTINES.filter((r) => !FEATURED_IDS.includes(r.id));
-    if (activeFilter !== "All") list = list.filter((r) => matchesFilter(r, activeFilter));
-    return [...list].sort((a, b) => (b.completions ?? 0) - (a.completions ?? 0));
-  }, [activeFilter]);
-
-  // Featured auto-play
-  useEffect(() => {
-    autoPlayRef.current = setInterval(() => {
-      setFeaturedIndex(prev => {
-        const next = (prev + 1) % featured.length;
-        featuredScrollRef.current?.scrollTo({ x: next * (FEATURED_W + 12), animated: true });
-        return next;
-      });
-    }, 3500);
-    return () => { if (autoPlayRef.current) clearInterval(autoPlayRef.current); };
-  }, [featured.length]);
-
-  // Dot animations
-  useEffect(() => {
-    [dotAnim0, dotAnim1, dotAnim2].forEach((anim, i) => {
-      Animated.timing(anim, {
-        toValue: i === featuredIndex ? 1 : 0,
-        duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: false,
-      }).start();
+  const routines = useMemo(() => {
+    const list = ROUTINES.filter(
+      (r) =>
+        (workoutMode === "gym") === isGymRoutine(r) &&
+        matchesFilter(r, activeFilter)
+    );
+    return [...list].sort((a, b) => {
+      const fa = FEATURED_IDS.includes(a.id) ? 1 : 0;
+      const fb = FEATURED_IDS.includes(b.id) ? 1 : 0;
+      return fb - fa || (b.completions ?? 0) - (a.completions ?? 0);
     });
-  }, [featuredIndex]);
+  }, [workoutMode, activeFilter]);
+
+  const switchMode = useCallback((mode: "home" | "gym") => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(220, "easeInEaseOut", "opacity"));
+    setWorkoutMode(mode);
+    setFocusedCard(0);
+  }, []);
+
+  const switchFilter = useCallback((pill: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(220, "easeInEaseOut", "opacity"));
+    setActiveFilter(pill);
+    setFocusedCard(0);
+  }, []);
+
+  // Sliding thumb for the Home/Gym toggle
+  const toggleAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(toggleAnim, {
+      toValue: workoutMode === "gym" ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [workoutMode]);
 
   // Exercise search over the cached pool
   const exerciseResults = useMemo(() => {
@@ -408,25 +392,22 @@ export default function Workout() {
     });
   }, []);
 
-  const onFeaturedScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const i = Math.round(e.nativeEvent.contentOffset.x / (FEATURED_W + 12));
-    setFeaturedIndex(i);
-  }, []);
-
   const onMainScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const sy = e.nativeEvent.contentOffset.y;
     scrollYRef.current = sy;
     const screenCenter = sy + SCREEN_H * 0.48;
     const relative = screenCenter - feedListYRef.current;
-    const newIdx = Math.max(0, Math.min(popular.length - 1,
+    const newIdx = Math.max(0, Math.min(routines.length - 1,
       Math.round(relative / ITEM_H - 0.3)
     ));
     setFocusedCard((prev) => prev !== newIdx ? newIdx : prev);
-  }, [popular.length]);
+  }, [routines.length]);
 
   const onFeedListLayout = useCallback((e: any) => {
     feedListYRef.current = e.nativeEvent.layout.y;
   }, []);
+
+  const firstLetter = userName ? userName[0].toUpperCase() : "";
 
   return (
     <View style={s.container}>
@@ -442,42 +423,61 @@ export default function Workout() {
 
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={{ paddingTop: insets.top + 16, paddingBottom: insets.bottom + 110 }}
+        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         onScroll={onMainScroll}
         scrollEventThrottle={50}
       >
-        {/* ── Header ── */}
+        {/* ── Top bar — avatar · mode · analytics ── */}
         <FadeTranslate order={0} direction="y" translateYFrom={-16}>
-          <View style={s.headerRow}>
-            <View>
-              <Text style={s.greeting}>{greeting}</Text>
-              <Text style={s.userName}>{userName || "Athlete"} 👋</Text>
+          <View style={s.topBar}>
+            <View style={s.topAvatar}>
+              {firstLetter ? (
+                <Text style={s.topAvatarLetter}>{firstLetter}</Text>
+              ) : (
+                <Ionicons name="person" size={17} color="rgba(255,255,255,0.65)" />
+              )}
             </View>
+
+            <View style={s.topCenter}>
+              <Ionicons name="location-outline" size={13} color={D.primary} />
+              <Text style={s.topCenterText}>
+                Training at {workoutMode === "gym" ? "the Gym" : "Home"}
+              </Text>
+            </View>
+
             <TouchableOpacity
-              style={s.analyticsBtn}
               activeOpacity={0.75}
+              style={s.topMenuBtn}
               onPress={() => router.push("/Analytics")}
             >
-              <Ionicons name="stats-chart" size={18} color="rgba(255,255,255,0.85)" />
+              <Ionicons name="stats-chart" size={15} color="#fff" />
             </TouchableOpacity>
           </View>
         </FadeTranslate>
 
+        {/* ── Hello header ── */}
+        <FadeTranslate order={0} delay={60} direction="y" translateYFrom={-10}>
+          <View style={s.helloWrap}>
+            <Text style={s.hello}>Hello, {userName || "Athlete"}</Text>
+            <Text style={s.helloSub}>Let&apos;s explore your workout world!</Text>
+          </View>
+        </FadeTranslate>
+
         {/* ── Search ── */}
-        <FadeTranslate order={0} delay={80} direction="y" translateYFrom={14}>
+        <FadeTranslate order={0} delay={100} direction="y" translateYFrom={12}>
           <View style={s.searchBar}>
             {isCaching ? (
               <ActivityIndicator size="small" color={D.primary} />
             ) : (
-              <Ionicons name="search" size={18} color="rgba(255,255,255,0.4)" />
+              <Ionicons name="search" size={16} color="rgba(255,255,255,0.45)" />
             )}
             <View style={s.searchInputWrap}>
               <TextInput
                 style={s.searchInput}
-                placeholder={isCaching ? "" : "Search workouts, exercises..."}
-                placeholderTextColor="rgba(255,255,255,0.35)"
+                placeholder={isCaching ? "" : "Search Workouts & Exercises"}
+                placeholderTextColor="rgba(255,255,255,0.38)"
                 value={search}
                 onChangeText={handleSearchChange}
                 returnKeyType="search"
@@ -494,16 +494,14 @@ export default function Workout() {
                 </Animated.Text>
               )}
             </View>
-            {search.length > 0 ? (
+            {search.length > 0 && (
               <TouchableOpacity
                 onPress={() => handleSearchChange("")}
                 activeOpacity={0.7}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
+                <Ionicons name="close-circle" size={17} color="rgba(255,255,255,0.4)" />
               </TouchableOpacity>
-            ) : (
-              <Ionicons name="options-outline" size={18} color="rgba(255,255,255,0.55)" />
             )}
           </View>
         </FadeTranslate>
@@ -589,7 +587,7 @@ export default function Workout() {
             )}
           </View>
         ) : (
-          /* ══ Browse: pills + featured + popular ══ */
+          /* ══ Browse: pills + section + cards ══ */
           <>
             {/* ── Filter pills ── */}
             <FadeTranslate order={0} delay={140} direction="y" translateYFrom={12}>
@@ -604,7 +602,7 @@ export default function Workout() {
                     <TouchableOpacity
                       key={pill}
                       activeOpacity={0.85}
-                      onPress={() => setActiveFilter(pill)}
+                      onPress={() => switchFilter(pill)}
                       style={[s.pill, active && s.pillActive]}
                     >
                       <Text style={[s.pillText, active && s.pillTextActive]}>{pill}</Text>
@@ -614,100 +612,62 @@ export default function Workout() {
               </ScrollView>
             </FadeTranslate>
 
-            {/* ── Featured carousel ── */}
-            <FadeTranslate order={0} delay={200} direction="y" translateYFrom={20}>
-              <ScrollView
-                ref={featuredScrollRef}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={FEATURED_W + 12}
-                decelerationRate="fast"
-                onScroll={onFeaturedScroll}
-                scrollEventThrottle={16}
-                contentContainerStyle={s.featuredScroll}
-              >
-                {featured.map((routine) => {
-                  const localImg = FEATURED_LOCAL[routine.id];
-                  return (
-                    <TouchableOpacity
-                      key={routine.id}
-                      activeOpacity={0.95}
-                      onPress={() => openRoutine(routine.id)}
-                      style={s.featuredCard}
-                    >
-                      {localImg ? (
-                        <Image source={localImg} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                      ) : routine.image ? (
-                        <Image source={{ uri: routine.image }} style={StyleSheet.absoluteFill} resizeMode="cover" />
-                      ) : null}
-                      {/* lighter left gradient so image shows through on the right */}
-                      <LinearGradient
-                        colors={["rgba(0,0,0,0.78)", "rgba(0,0,0,0.36)", "rgba(0,0,0,0.0)"]}
-                        locations={[0, 0.52, 1]}
-                        start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }}
-                        style={StyleSheet.absoluteFill}
-                      />
-                      <LinearGradient
-                        colors={["transparent", "rgba(0,0,0,0.55)"]}
-                        locations={[0.45, 1]}
-                        style={StyleSheet.absoluteFill}
-                      />
+            {/* ── Section header + Home/Gym toggle ── */}
+            <FadeTranslate order={0} delay={200} direction="y" translateYFrom={14}>
+              <View style={s.sectionRow}>
+                <Text style={s.sectionTitle}>Workout Routines</Text>
 
-                      <View style={s.featuredContent}>
-                        <View>
-                          <Text style={s.featuredEyebrow}>FEATURED ROUTINE</Text>
-                          <Text style={s.featuredTitle}>{routine.name.toUpperCase()}</Text>
-                          <Text style={s.featuredAthlete}>by {routine.athlete?.name}</Text>
-                          <View style={s.featuredPills}>
-                            <View style={s.metaPill}>
-                              <Text style={s.metaPillText}>{routine.duration.toUpperCase()}</Text>
-                            </View>
-                            <View style={s.metaPill}>
-                              <Text style={s.metaPillText}>{routine.difficulty.toUpperCase()}</Text>
-                            </View>
-                          </View>
-                        </View>
-
-                        <View style={s.startBtn}>
-                          <Text style={s.startBtnText}>Start Routine</Text>
-                          <Ionicons name="play" size={14} color="#000" />
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* dots */}
-              <View style={s.dotsRow}>
-                {[dotAnim0, dotAnim1, dotAnim2].map((anim, i) => (
+                {/* Home / Gym sliding toggle */}
+                <View style={s.modeToggle}>
                   <Animated.View
-                    key={i}
                     style={[
-                      s.dot,
+                      s.modeThumb,
                       {
-                        width: anim.interpolate({ inputRange: [0, 1], outputRange: [6, 18] }),
-                        backgroundColor: anim.interpolate({ inputRange: [0, 1], outputRange: ["rgba(255,255,255,0.22)", D.primary] }),
+                        transform: [{
+                          translateX: toggleAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0, MODE_SEG_W],
+                          }),
+                        }],
                       },
                     ]}
                   />
-                ))}
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => switchMode("home")}
+                    style={s.modeSeg}
+                  >
+                    <Ionicons
+                      name="home"
+                      size={12}
+                      color={workoutMode === "home" ? "#000" : "rgba(255,255,255,0.45)"}
+                    />
+                    <Text style={[s.modeSegText, workoutMode === "home" && s.modeSegTextActive]}>
+                      Home
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => switchMode("gym")}
+                    style={s.modeSeg}
+                  >
+                    <Ionicons
+                      name="barbell"
+                      size={12}
+                      color={workoutMode === "gym" ? "#000" : "rgba(255,255,255,0.45)"}
+                    />
+                    <Text style={[s.modeSegText, workoutMode === "gym" && s.modeSegTextActive]}>
+                      Gym
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </FadeTranslate>
 
-            {/* ── Popular workouts ── */}
-            <FadeTranslate order={0} delay={260} direction="y" translateYFrom={16}>
-              <View style={s.sectionRow}>
-                <Text style={s.sectionTitle}>Popular Workouts</Text>
-                <TouchableOpacity activeOpacity={0.7} onPress={() => setActiveFilter("All")}>
-                  <Text style={s.seeAll}>See all</Text>
-                </TouchableOpacity>
-              </View>
-            </FadeTranslate>
-
+            {/* ── Routine cards feed ── */}
             <View style={s.feedList} onLayout={onFeedListLayout}>
-              {popular.map((routine, idx) => (
-                <PopularCard
+              {routines.map((routine, idx) => (
+                <RoutineCard
                   key={routine.id}
                   routine={routine}
                   idx={idx}
@@ -715,8 +675,10 @@ export default function Workout() {
                   onPress={openRoutine}
                 />
               ))}
-              {popular.length === 0 && (
-                <Text style={s.emptyText}>No workouts match this filter.</Text>
+              {routines.length === 0 && (
+                <Text style={s.emptyText}>
+                  No {workoutMode === "gym" ? "gym" : "home"} workouts in this category yet.
+                </Text>
               )}
             </View>
           </>
@@ -730,17 +692,38 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: D.bg },
   scroll: { flex: 1 },
 
-  // Header
-  headerRow: {
+  // Top bar
+  topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, marginBottom: 20,
+    paddingHorizontal: H_PAD, marginBottom: 18,
   },
-  greeting: { color: "rgba(255,255,255,0.55)", fontFamily: theme.medium, fontSize: 14 },
-  userName: { color: D.text, fontFamily: theme.bold, fontSize: 26, letterSpacing: -0.4, marginTop: 2 },
-  analyticsBtn: {
-    width: 42, height: 42, borderRadius: 21,
+  topAvatar: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    alignItems: "center", justifyContent: "center",
+  },
+  topAvatarLetter: { color: "#fff", fontFamily: theme.bold, fontSize: 15 },
+  topCenter: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 999, paddingVertical: 7, paddingHorizontal: 13,
+  },
+  topCenterText: {
+    color: "rgba(255,255,255,0.85)", fontFamily: theme.medium, fontSize: 12,
+  },
+  topMenuBtn: {
+    width: 38, height: 38, borderRadius: 19,
     backgroundColor: "rgba(255,255,255,0.08)",
-    justifyContent: "center", alignItems: "center",
+    alignItems: "center", justifyContent: "center",
+  },
+
+  // Hello header
+  helloWrap: { paddingHorizontal: H_PAD, marginBottom: 16 },
+  hello: {
+    color: D.text, fontFamily: theme.bold, fontSize: 28, letterSpacing: -0.5,
+  },
+  helloSub: {
+    color: "rgba(255,255,255,0.45)", fontFamily: theme.medium, fontSize: 13, marginTop: 3,
   },
 
   // Search
@@ -748,16 +731,15 @@ const s = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     marginHorizontal: H_PAD, marginBottom: 16,
     backgroundColor: "rgba(255,255,255,0.07)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 16, paddingHorizontal: 14, height: 48,
+    borderRadius: 999, paddingHorizontal: 16, height: 44,
   },
   searchInputWrap: { flex: 1, justifyContent: "center" },
   searchInput: {
-    color: D.text, fontFamily: theme.medium, fontSize: 14, paddingVertical: 0,
+    color: D.text, fontFamily: theme.medium, fontSize: 13.5, paddingVertical: 0,
   },
   cachingPlaceholder: {
     position: "absolute", left: 0, right: 0,
-    color: D.primary, fontFamily: theme.medium, fontSize: 14,
+    color: D.primary, fontFamily: theme.medium, fontSize: 13.5,
   },
 
   // Search results
@@ -795,127 +777,111 @@ const s = StyleSheet.create({
     justifyContent: "center", alignItems: "center",
   },
   emptyTitle: { color: D.text, fontFamily: theme.bold, fontSize: 17 },
+  emptyText: { color: D.sub, fontFamily: theme.medium, fontSize: 14, textAlign: "center" },
 
   // Filter pills
-  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 20, gap: 8 },
+  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 22, gap: 8 },
   pill: {
-    backgroundColor: "rgba(255,255,255,0.08)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
-    paddingHorizontal: 18, paddingVertical: 9, borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
+    paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999,
   },
   pillActive: { backgroundColor: D.primary, borderColor: D.primary },
-  pillText: { color: "rgba(255,255,255,0.85)", fontFamily: theme.medium, fontSize: 13.5 },
-  pillTextActive: { color: "#000", fontFamily: theme.bold },
-
-  // Featured carousel
-  featuredScroll: { paddingHorizontal: H_PAD, gap: 12 },
-  featuredCard: {
-    width: FEATURED_W, height: FEATURED_H,
-    borderRadius: 28, overflow: "hidden",
-    backgroundColor: "#0A1200",
-    borderWidth: 1, borderColor: "rgba(170,251,5,0.22)",
-  },
-  featuredContent: { flex: 1, padding: 22, justifyContent: "space-between" },
-  featuredEyebrow: {
-    color: D.primary, fontFamily: theme.bold, fontSize: 11,
-    letterSpacing: 1.6, marginBottom: 10,
-  },
-  featuredTitle: {
-    color: D.text, fontFamily: theme.black ?? theme.bold, fontSize: 28,
-    lineHeight: 33, letterSpacing: -0.5, maxWidth: FEATURED_W * 0.72,
-  },
-  featuredAthlete: {
-    color: "rgba(255,255,255,0.65)", fontFamily: theme.medium, fontSize: 13.5, marginTop: 8,
-  },
-  featuredPills: { flexDirection: "row", gap: 8, marginTop: 14 },
-  metaPill: {
-    backgroundColor: "rgba(0,0,0,0.45)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.22)",
-    borderRadius: 15, paddingHorizontal: 13, paddingVertical: 6,
-  },
-  metaPillText: {
-    color: "rgba(255,255,255,0.85)", fontFamily: theme.bold,
-    fontSize: 10.5, letterSpacing: 0.8,
-  },
-  startBtn: {
-    alignSelf: "flex-start",
-    flexDirection: "row", alignItems: "center", gap: 8,
-    backgroundColor: D.primary,
-    borderRadius: 26, paddingHorizontal: 24, paddingVertical: 13,
-  },
-  startBtnText: { color: "#000", fontFamily: theme.bold, fontSize: 15 },
-
-  dotsRow: {
-    flexDirection: "row", justifyContent: "center", gap: 6,
-    marginTop: 14, marginBottom: 26,
-  },
-  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.22)" },
-  dotActive: { backgroundColor: D.primary, width: 18 },
+  pillText: { color: "rgba(255,255,255,0.80)", fontFamily: theme.medium, fontSize: 13 },
+  pillTextActive: { color: "#000", fontFamily: theme.semibold },
 
   // Section header
   sectionRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: H_PAD, marginBottom: 16,
   },
-  sectionTitle: { color: D.text, fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.3 },
-  seeAll: { color: D.primary, fontFamily: theme.medium, fontSize: 13.5 },
-
-  // Feed cards
-  feedList: { paddingHorizontal: H_PAD, gap: 26 },
-  feedCard: {
-    width: CARD_W, height: CARD_H,
-    borderRadius: 24, overflow: "hidden",
-    justifyContent: "space-between", padding: 14,
+  sectionTitle: {
+    color: D.text, fontFamily: theme.bold, fontSize: 20, letterSpacing: -0.3,
   },
 
-  // animated creator pill
-  creatorPill: {
-    flexDirection: "row", alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "rgba(0,0,0,0.48)",
-    borderRadius: 24, paddingVertical: 5, paddingLeft: 5, paddingRight: 5,
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.12)",
-    overflow: "hidden",
+  // Home / Gym sliding toggle
+  modeToggle: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.07)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
+    borderRadius: 999, padding: 3,
   },
-  creatorAvatar: {
-    width: 28, height: 28, borderRadius: 14,
-    borderWidth: 1.5, borderColor: "rgba(255,255,255,0.55)",
-  },
-  creatorByLine: {
-    color: "rgba(255,255,255,0.55)", fontFamily: theme.medium,
-    fontSize: 9, letterSpacing: 0.4, textTransform: "uppercase",
-  },
-  creatorName: { color: "#fff", fontFamily: theme.bold, fontSize: 12 },
-
-  cardBottom: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
-  cardStatRow: { flexDirection: "row", gap: 14 },
-  cardStat: { flexDirection: "row", alignItems: "center", gap: 5 },
-  cardStatText: {
-    color: "#fff", fontFamily: theme.bold, fontSize: 13.5,
-    textShadowColor: "rgba(0,0,0,0.6)",
-    textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4,
-  },
-  avatarStack: { flexDirection: "row", alignItems: "center" },
-  stackAv: {
-    width: 30, height: 30, borderRadius: 15,
-    borderWidth: 2.5, borderColor: "#000",
-  },
-
-  // compact info under card
-  feedInfo: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    paddingHorizontal: 4, paddingTop: 12,
-  },
-  feedInfoName: { color: D.text, fontFamily: theme.bold, fontSize: 15.5, letterSpacing: -0.2 },
-  feedInfoMeta: { color: D.sub, fontFamily: theme.medium, fontSize: 12.5, marginTop: 2 },
-  goBtn: {
-    width: 32, height: 32, borderRadius: 16,
+  modeThumb: {
+    position: "absolute",
+    top: 3, left: 3,
+    width: MODE_SEG_W, height: 28,
+    borderRadius: 999,
     backgroundColor: D.primary,
-    justifyContent: "center", alignItems: "center",
-    paddingLeft: 2, // optical center for play icon
+  },
+  modeSeg: {
+    width: MODE_SEG_W, height: 28,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
+  },
+  modeSegText: {
+    color: "rgba(255,255,255,0.45)", fontFamily: theme.semibold, fontSize: 11.5,
+  },
+  modeSegTextActive: { color: "#000" },
+
+  // Routine cards
+  feedList: { paddingHorizontal: H_PAD, gap: 18 },
+  card: {
+    width: CARD_W, height: CARD_H,
+    backgroundColor: "#0D0D0D",
   },
 
-  emptyText: { color: D.sub, fontFamily: theme.medium, fontSize: 14, textAlign: "center" },
+  cardTopRow: {
+    flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between",
+    padding: 20,
+  },
+  cardTimeRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
+  cardTime: {
+    color: "#fff", fontFamily: theme.bold, fontSize: 24, letterSpacing: -0.4,
+  },
+  cardDiff: { fontFamily: theme.semibold, fontSize: 12 },
+
+  avatarRow: { flexDirection: "row", alignItems: "center", marginTop: 9 },
+  stackAv: {
+    width: 24, height: 24, borderRadius: 12,
+    borderWidth: 1.5, borderColor: "rgba(0,0,0,0.85)",
+  },
+  countPill: {
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderRadius: 999, paddingHorizontal: 8, height: 24,
+    alignItems: "center", justifyContent: "center",
+    marginLeft: -6, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.85)",
+  },
+  countPillText: { color: "#fff", fontFamily: theme.bold, fontSize: 10 },
+
+  starCircle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.14)",
+    alignItems: "center", justifyContent: "center",
+  },
+  starCircleFeatured: {
+    backgroundColor: D.primary,
+    borderColor: D.primary,
+  },
+
+  // Frosted glass bar
+  glassBarWrap: {
+    position: "absolute", bottom: 14, left: 14, right: 14,
+    borderRadius: 26, overflow: "hidden",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.16)",
+  },
+  glassBar: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    backgroundColor: "rgba(30,30,30,0.38)",
+    paddingVertical: 12, paddingLeft: 18, paddingRight: 12,
+  },
+  glassTextCol: { flex: 1, gap: 2 },
+  glassTitle: { color: "#fff", fontFamily: theme.bold, fontSize: 17.5, letterSpacing: -0.2 },
+  glassSub: { color: "rgba(255,255,255,0.62)", fontFamily: theme.medium, fontSize: 11.5 },
+  arrowCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: D.primary,
+    alignItems: "center", justifyContent: "center",
+  },
 
   bottomScreenFade: {
     position: "absolute",

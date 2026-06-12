@@ -43,6 +43,7 @@
     "expo-system-ui": "~55.0.18",
     "expo-updates": "~55.0.24",
     "expo-video": "~55.0.17",
+    "figma-squircle": "^1.1.0",
     "jwt-decode": "^4.0.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",

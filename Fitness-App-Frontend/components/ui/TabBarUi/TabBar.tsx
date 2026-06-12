@@ -1,52 +1,71 @@
-import { View, LayoutChangeEvent, StyleSheet, Platform } from "react-native";
+import {
+  View,
+  StyleSheet,
+  Platform,
+  useWindowDimensions,
+  TouchableOpacity,
+  Text,
+} from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import Ionicons from "@expo/vector-icons/Ionicons";
-import TabBarButton from "./TabBarButton";
 import { theme } from "@/constants/theme";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
   withTiming,
+  Easing,
+  interpolate,
+  Extrapolation,
 } from "react-native-reanimated";
-import { TouchableOpacity } from "react-native";
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
-const ICON_COLOR_SELECTED = '#000000';       // black on lime circle
-const ICON_COLOR_UNSELECTED = 'rgba(255,255,255,0.35)'; // ghosted white
+const ICON_ACTIVE = "#000000";
+const ICON_INACTIVE = "rgba(255,255,255,0.45)";
 
 export const icon = {
   workout: (props: any) => (
     <Ionicons
       name={props.focused ? "barbell" : "barbell-outline"}
-      size={25}
-      color={props.focused ? ICON_COLOR_SELECTED : ICON_COLOR_UNSELECTED}
+      size={22}
+      color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   nutrition: (props: any) => (
     <Ionicons
       name={props.focused ? "restaurant" : "restaurant-outline"}
-      size={25}
-      color={props.focused ? ICON_COLOR_SELECTED : ICON_COLOR_UNSELECTED}
+      size={22}
+      color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   chatbot: (props: any) => (
     <Ionicons
-      name={props.focused ? "chatbubbles" : "chatbubbles-outline"}
-      size={25}
-      color={props.focused ? ICON_COLOR_SELECTED : ICON_COLOR_UNSELECTED}
+      name={props.focused ? "chatbubble-ellipses" : "chatbubble-ellipses-outline"}
+      size={22}
+      color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   profile: (props: any) => (
     <Ionicons
       name={props.focused ? "person" : "person-outline"}
-      size={25}
-      color={props.focused ? ICON_COLOR_SELECTED : ICON_COLOR_UNSELECTED}
+      size={22}
+      color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
 };
+
+const LABEL: Record<string, string> = {
+  workout: "Workout",
+  nutrition: "Nutrition",
+  chatbot: "Chat",
+  profile: "Profile",
+};
+
+const BAR_HEIGHT = 72;
+const PILL_HEIGHT = 52;
 
 export function TabBar({
   state,
@@ -55,168 +74,221 @@ export function TabBar({
   vertical,
 }: BottomTabBarProps & { vertical?: boolean }) {
   const insets = useSafeAreaInsets();
-  const [dimensions, setDimensions] = useState({ width: 400, height: 75 });
-  const buttonCount = state.routes.length;
-  const buttonWidth = dimensions.width / buttonCount;
-  const circleSize = 64;
+  const { width: windowWidth } = useWindowDimensions();
 
-  const tabPositionX = useSharedValue(0);
-  const tabBarTranslateY = useSharedValue(0);
+  const tabBarWidth = Math.min(windowWidth * 0.88, 420);
+  const buttonWidth = tabBarWidth / state.routes.length;
+  const pillWidth = buttonWidth - 16;
+
+  // — animations
+  const pillX = useSharedValue(0);
+  const hideY = useSharedValue(0);
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+  const pressScale = useSharedValue(1);
 
   const isChatbot = state.routes[state.index]?.name === "chatbot";
 
-  // Slide tab bar off-screen when on chatbot, back when leaving
+  // hide/show for chatbot screen — fast, no bounce
   useEffect(() => {
-    tabBarTranslateY.value = withTiming(isChatbot ? 120 : 0, {
-      duration: 1000,
+    hideY.value = withTiming(isChatbot ? 130 : 0, {
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
     });
   }, [isChatbot]);
 
-  const onTabbarLayout = (e: LayoutChangeEvent) => {
-    setDimensions({
-      width: e.nativeEvent.layout.width,
-      height: e.nativeEvent.layout.height,
-    });
-  };
-
+  // pill indicator — fast cubic ease, zero bounce
   useEffect(() => {
-    const offset = (buttonWidth - circleSize) / 2;
-    tabPositionX.value = withSpring(buttonWidth * state.index + offset, {
-      damping: 15,
-      stiffness: 15,
+    const offset = (buttonWidth - pillWidth) / 2;
+    pillX.value = withTiming(buttonWidth * state.index + offset, {
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
     });
-  }, [state.index, buttonWidth]);
+  }, [state.index, buttonWidth, pillWidth]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tabPositionX.value }],
+  // drag gesture — long press to grab, spring snap back on release
+  const pan = Gesture.Pan()
+    .activateAfterLongPress(320)
+    .onStart(() => {
+      pressScale.value = withTiming(0.965, { duration: 120 });
+    })
+    .onUpdate((e) => {
+      dragX.value = e.translationX;
+      dragY.value = e.translationY;
+    })
+    .onEnd(() => {
+      pressScale.value = withSpring(1, { damping: 22, stiffness: 320 });
+      dragX.value = withSpring(0, { damping: 18, stiffness: 200, mass: 0.85 });
+      dragY.value = withSpring(0, { damping: 18, stiffness: 200, mass: 0.85 });
+    })
+    .onFinalize(() => {
+      // safety — restore if gesture is cancelled mid-drag
+      pressScale.value = withSpring(1, { damping: 22, stiffness: 320 });
+      dragX.value = withSpring(0, { damping: 18, stiffness: 200, mass: 0.85 });
+      dragY.value = withSpring(0, { damping: 18, stiffness: 200, mass: 0.85 });
+    });
+
+  const pillStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: pillX.value }],
   }));
 
-  const tabBarSlideStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: tabBarTranslateY.value }],
-    opacity: tabBarTranslateY.value < 60 ? 1 : 0,
+  const wrapperStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: dragX.value },
+      { translateY: hideY.value + dragY.value },
+      { scale: pressScale.value },
+    ],
+    opacity: interpolate(hideY.value, [0, 80, 130], [1, 0.3, 0], Extrapolation.CLAMP),
   }));
 
   return (
-    <Animated.View
-      style={[
-        styles.tabBarWrapper,
-        { bottom: Math.max(insets.bottom, 12) + 12 },
-        tabBarSlideStyle,
-      ]}
-      onLayout={onTabbarLayout}
-    >
-      <BlurView
-        experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-        blurReductionFactor={1}
-        intensity={Platform.OS === 'ios' ? 100 : 50}
-        tint={Platform.OS === 'ios' ? "systemChromeMaterialDark" : "dark"}
-        style={styles.tabBar}
+    <GestureDetector gesture={pan}>
+      <Animated.View
+        style={[
+          styles.wrapper,
+          {
+            bottom: Math.max(insets.bottom, 12) + 10,
+            width: tabBarWidth,
+          },
+          wrapperStyle,
+        ]}
       >
-        {/* Glass effect border */}
-        <View style={styles.glassBorder} pointerEvents="none" />
+        <BlurView
+          experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
+          intensity={Platform.OS === "ios" ? 85 : 55}
+          tint={Platform.OS === "ios" ? "systemChromeMaterialDark" : "dark"}
+          style={[styles.bar, { width: tabBarWidth, height: BAR_HEIGHT }]}
+        >
+          {/* thin top-edge highlight — the only glass cue needed */}
+          <View style={styles.topEdge} pointerEvents="none" />
 
-        {/* Colored circle highlight for active tab */}
-        <Animated.View
-          style={[
-            styles.circle,
-            {
-              top: (dimensions.height - circleSize) / 2,
-              backgroundColor: theme.primary,
-              width: circleSize,
-              height: circleSize,
-              borderRadius: circleSize / 2,
-            },
-            animatedStyle,
-          ]}
-        />
-        {state.routes.map((route: any, index: any) => {
-          const { options } = descriptors[route.key];
-          const label =
-            options.tabBarLabel ?? options.title ?? route.name;
-          const isFocused = state.index === index;
+          {/* border */}
+          <View style={styles.border} pointerEvents="none" />
 
-          const onPress = () => {
-            const offset = (buttonWidth - circleSize) / 2;
-            tabPositionX.value = withSpring(buttonWidth * index + offset, {
-              damping: 15,
-              stiffness: 150,
-            });
+          {/* ── Active pill ──────────────────────────────────────────────── */}
+          <Animated.View
+            style={[
+              styles.pill,
+              {
+                top: (BAR_HEIGHT - PILL_HEIGHT) / 2,
+                width: pillWidth,
+                height: PILL_HEIGHT,
+              },
+              pillStyle,
+            ]}
+          />
 
-            const event = navigation.emit({
-              type: "tabPress",
-              target: route.key,
-              canPreventDefault: true,
-            });
-            if (!isFocused && !event.defaultPrevented) {
-              navigation.navigate(route.name, route.params);
-            }
-          };
+          {/* ── Tab buttons ──────────────────────────────────────────────── */}
+          {state.routes.map((route: any, index: number) => {
+            const { options } = descriptors[route.key];
+            const label = LABEL[route.name] ?? options.tabBarLabel ?? route.name;
+            const isFocused = state.index === index;
 
-          return (
-            <TouchableOpacity
-              key={route.key}
-              accessibilityRole="button"
-              accessibilityState={isFocused ? { selected: true } : {}}
-              accessibilityLabel={options.tabBarAccessibilityLabel}
-              onPress={onPress}
-              style={{
-                width: buttonWidth,
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: isFocused ? 2 : 1,
-              }}
-              activeOpacity={0.7}
-            >
-              {icon[route.name as keyof typeof icon]?.({ focused: isFocused })}
-            </TouchableOpacity>
-          );
-        })}
-      </BlurView>
-    </Animated.View>
+            const onPress = () => {
+              const offset = (buttonWidth - pillWidth) / 2;
+              pillX.value = withTiming(buttonWidth * index + offset, {
+                duration: 200,
+                easing: Easing.out(Easing.cubic),
+              });
+
+              const event = navigation.emit({
+                type: "tabPress",
+                target: route.key,
+                canPreventDefault: true,
+              });
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name, route.params);
+              }
+            };
+
+            return (
+              <TouchableOpacity
+                key={route.key}
+                accessibilityRole="button"
+                accessibilityState={isFocused ? { selected: true } : {}}
+                accessibilityLabel={options.tabBarAccessibilityLabel}
+                onPress={onPress}
+                style={{
+                  width: buttonWidth,
+                  height: BAR_HEIGHT,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: isFocused ? 2 : 1,
+                }}
+                activeOpacity={0.72}
+              >
+                <View style={styles.tabContent}>
+                  {icon[route.name as keyof typeof icon]?.({ focused: isFocused })}
+                  <Text
+                    style={[
+                      styles.label,
+                      { color: isFocused ? "#000000" : "rgba(255,255,255,0.45)" },
+                    ]}
+                  >
+                    {String(label)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </BlurView>
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
 const styles = StyleSheet.create({
-  tabBarWrapper: {
+  wrapper: {
     position: "absolute",
-    bottom: 25,
     alignSelf: "center",
-    width: 333,
-    height: 75,
     zIndex: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
   },
-  tabBar: {
+  bar: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    // dark glass base — deepPrimary tinted so the lime circle pops
-    backgroundColor: "rgba(6, 14, 6, 0.72)",
-    paddingVertical: 14,
+    backgroundColor: "rgba(8, 16, 8, 0.68)",
     borderRadius: 100,
-    shadowColor: theme.deepPrimary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0,
-    shadowRadius: 20,
-    elevation: 2,
-    width: 333,
-    height: 76,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.07)",  // faint lime outline
   },
-  glassBorder: {
+  topEdge: {
+    position: "absolute",
+    top: 0,
+    left: 20,
+    right: 20,
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 100,
+    zIndex: 4,
+  },
+  border: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 100,
     borderWidth: 1,
-    // top/left highlight gives glassy depth on dark surface
-    borderTopColor: 'rgba(255, 255, 255, 0.14)',
-    borderLeftColor: 'rgba(255, 255, 255, 0.07)',
-    borderBottomColor: 'rgba(255, 255, 255, 0.12)',
-    borderRightColor: 'rgba(0, 0, 0, 0.20)',
-    zIndex: 2,
+    borderTopColor: "rgba(255, 255, 255, 0.06)",
+    borderLeftColor: "rgba(255, 255, 255, 0.035)",
+    borderBottomColor: "rgba(255, 255, 255, 0.025)",
+    borderRightColor: "rgba(255, 255, 255, 0.035)",
+    zIndex: 3,
   },
-  circle: {
+  pill: {
     position: "absolute",
+    backgroundColor: theme.primary,
+    borderRadius: 100,
     zIndex: 1,
+  },
+  tabContent: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+  },
+  label: {
+    fontSize: 10,
+    fontFamily: theme.bold,
+    marginTop: 1,
   },
 });

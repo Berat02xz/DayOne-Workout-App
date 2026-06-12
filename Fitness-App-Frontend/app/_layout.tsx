@@ -10,11 +10,6 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemeProvider, DarkTheme } from "@react-navigation/native";
 import { initialWindowMetrics, SafeAreaProvider } from "react-native-safe-area-context";
 import * as SystemUI from 'expo-system-ui';
-import { configureReanimatedLogger } from "react-native-reanimated";
-
-// Reanimated's dev-mode strict freezing breaks @gorhom/bottom-sheet's enum
-// constants ("Cannot assign to read-only property 'NONE'").
-configureReanimatedLogger({ strict: false });
 
 export default function RootLayout() {
   const [sessionChecked, setSessionChecked] = useState(false);
