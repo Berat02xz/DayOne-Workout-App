@@ -2,9 +2,7 @@ import {
   View,
   StyleSheet,
   Platform,
-  useWindowDimensions,
   TouchableOpacity,
-  Text,
 } from "react-native";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import Ionicons from "@expo/vector-icons/Ionicons";
@@ -30,42 +28,38 @@ export const icon = {
   workout: (props: any) => (
     <Ionicons
       name={props.focused ? "barbell" : "barbell-outline"}
-      size={22}
+      size={24}
       color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   nutrition: (props: any) => (
     <Ionicons
       name={props.focused ? "restaurant" : "restaurant-outline"}
-      size={22}
+      size={24}
       color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   chatbot: (props: any) => (
     <Ionicons
       name={props.focused ? "chatbubble-ellipses" : "chatbubble-ellipses-outline"}
-      size={22}
+      size={24}
       color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
   profile: (props: any) => (
     <Ionicons
       name={props.focused ? "person" : "person-outline"}
-      size={22}
+      size={24}
       color={props.focused ? ICON_ACTIVE : ICON_INACTIVE}
     />
   ),
 };
 
-const LABEL: Record<string, string> = {
-  workout: "Workout",
-  nutrition: "Nutrition",
-  chatbot: "Chat",
-  profile: "Profile",
-};
-
+// Floating dock — icon-only, circle indicator, iOS 26 liquid-glass proportions
 const BAR_HEIGHT = 72;
-const PILL_HEIGHT = 52;
+const BAR_PAD = 7;            // inner padding at both ends
+const BTN_W = 70;             // touch target per tab
+const CIRCLE = 58;            // active indicator circle (bar height minus ~7pt inset)
 
 export function TabBar({
   state,
@@ -74,14 +68,12 @@ export function TabBar({
   vertical,
 }: BottomTabBarProps & { vertical?: boolean }) {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
 
-  const tabBarWidth = Math.min(windowWidth * 0.88, 420);
-  const buttonWidth = tabBarWidth / state.routes.length;
-  const pillWidth = buttonWidth - 16;
+  const tabBarWidth = BTN_W * state.routes.length + BAR_PAD * 2;
+  const circleXFor = (index: number) => BAR_PAD + BTN_W * index + (BTN_W - CIRCLE) / 2;
 
   // — animations
-  const pillX = useSharedValue(0);
+  const circleX = useSharedValue(circleXFor(state.index));
   const hideY = useSharedValue(0);
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
@@ -97,14 +89,13 @@ export function TabBar({
     });
   }, [isChatbot]);
 
-  // pill indicator — fast cubic ease, zero bounce
+  // circle indicator — fast cubic ease, zero bounce
   useEffect(() => {
-    const offset = (buttonWidth - pillWidth) / 2;
-    pillX.value = withTiming(buttonWidth * state.index + offset, {
+    circleX.value = withTiming(circleXFor(state.index), {
       duration: 200,
       easing: Easing.out(Easing.cubic),
     });
-  }, [state.index, buttonWidth, pillWidth]);
+  }, [state.index]);
 
   // drag gesture — long press to grab, spring snap back on release
   const pan = Gesture.Pan()
@@ -128,8 +119,8 @@ export function TabBar({
       dragY.value = withSpring(0, { damping: 18, stiffness: 200, mass: 0.85 });
     });
 
-  const pillStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: pillX.value }],
+  const circleStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: circleX.value }],
   }));
 
   const wrapperStyle = useAnimatedStyle(() => ({
@@ -165,28 +156,16 @@ export function TabBar({
           {/* border */}
           <View style={styles.border} pointerEvents="none" />
 
-          {/* ── Active pill ──────────────────────────────────────────────── */}
-          <Animated.View
-            style={[
-              styles.pill,
-              {
-                top: (BAR_HEIGHT - PILL_HEIGHT) / 2,
-                width: pillWidth,
-                height: PILL_HEIGHT,
-              },
-              pillStyle,
-            ]}
-          />
+          {/* ── Active circle ────────────────────────────────────────────── */}
+          <Animated.View style={[styles.circle, circleStyle]} />
 
           {/* ── Tab buttons ──────────────────────────────────────────────── */}
           {state.routes.map((route: any, index: number) => {
             const { options } = descriptors[route.key];
-            const label = LABEL[route.name] ?? options.tabBarLabel ?? route.name;
             const isFocused = state.index === index;
 
             const onPress = () => {
-              const offset = (buttonWidth - pillWidth) / 2;
-              pillX.value = withTiming(buttonWidth * index + offset, {
+              circleX.value = withTiming(circleXFor(index), {
                 duration: 200,
                 easing: Easing.out(Easing.cubic),
               });
@@ -206,28 +185,12 @@ export function TabBar({
                 key={route.key}
                 accessibilityRole="button"
                 accessibilityState={isFocused ? { selected: true } : {}}
-                accessibilityLabel={options.tabBarAccessibilityLabel}
+                accessibilityLabel={options.tabBarAccessibilityLabel ?? route.name}
                 onPress={onPress}
-                style={{
-                  width: buttonWidth,
-                  height: BAR_HEIGHT,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  zIndex: isFocused ? 2 : 1,
-                }}
+                style={styles.tabBtn}
                 activeOpacity={0.72}
               >
-                <View style={styles.tabContent}>
-                  {icon[route.name as keyof typeof icon]?.({ focused: isFocused })}
-                  <Text
-                    style={[
-                      styles.label,
-                      { color: isFocused ? "#000000" : "rgba(255,255,255,0.45)" },
-                    ]}
-                  >
-                    {String(label)}
-                  </Text>
-                </View>
+                {icon[route.name as keyof typeof icon]?.({ focused: isFocused })}
               </TouchableOpacity>
             );
           })}
@@ -251,6 +214,7 @@ const styles = StyleSheet.create({
   bar: {
     flexDirection: "row",
     alignItems: "center",
+    paddingHorizontal: BAR_PAD,
     backgroundColor: "rgba(8, 16, 8, 0.68)",
     borderRadius: 100,
     overflow: "hidden",
@@ -275,20 +239,21 @@ const styles = StyleSheet.create({
     borderRightColor: "rgba(255, 255, 255, 0.035)",
     zIndex: 3,
   },
-  pill: {
+  circle: {
     position: "absolute",
+    left: 0,
+    top: (BAR_HEIGHT - CIRCLE) / 2,
+    width: CIRCLE,
+    height: CIRCLE,
+    borderRadius: CIRCLE / 2,
     backgroundColor: theme.primary,
-    borderRadius: 100,
     zIndex: 1,
   },
-  tabContent: {
+  tabBtn: {
+    width: BTN_W,
+    height: BAR_HEIGHT,
     alignItems: "center",
     justifyContent: "center",
-    gap: 3,
-  },
-  label: {
-    fontSize: 10,
-    fontFamily: theme.bold,
-    marginTop: 1,
+    zIndex: 2,
   },
 });

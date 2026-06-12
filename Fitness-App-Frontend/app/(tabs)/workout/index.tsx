@@ -38,9 +38,9 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const H_PAD = 20;
 const CARD_W = SCREEN_W - H_PAD * 2;
-const CARD_H = CARD_W * 0.98;           // tall cards like the reference UI
-const CARD_RADIUS = 38;
-const ITEM_H = CARD_H + 18;             // card + feed gap
+const CARD_H = CARD_W * 1.0;            // square cards like the reference UI
+const CARD_RADIUS = 40;
+const ITEM_H = CARD_H + 16;             // card + feed gap
 const MAX_RESULTS = 30;
 const MODE_SEG_W = 66;                  // width of each half of the Home/Gym toggle
 
@@ -199,11 +199,11 @@ const RoutineCard = React.memo(function RoutineCard({
               </View>
             </View>
 
-            <View style={[s.starCircle, isFeatured && s.starCircleFeatured]}>
+            <View style={s.starCircle}>
               <Ionicons
-                name={isFeatured ? "star" : "star-outline"}
-                size={15}
-                color={isFeatured ? "#000" : "#fff"}
+                name="star"
+                size={16}
+                color={isFeatured ? D.primary : "#fff"}
               />
             </View>
           </View>
@@ -212,8 +212,8 @@ const RoutineCard = React.memo(function RoutineCard({
           <View style={s.glassBarWrap}>
             <BlurView
               experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
-              intensity={Platform.OS === "ios" ? 40 : 30}
-              tint="dark"
+              intensity={Platform.OS === "ios" ? 55 : 35}
+              tint="light"
               style={s.glassBar}
             >
               <View style={s.glassTextCol}>
@@ -225,7 +225,7 @@ const RoutineCard = React.memo(function RoutineCard({
               <View style={s.arrowCircle}>
                 <Ionicons
                   name="arrow-forward"
-                  size={18}
+                  size={19}
                   color="#000"
                   style={{ transform: [{ rotate: "-45deg" }] }}
                 />
@@ -441,7 +441,7 @@ export default function Workout() {
             </View>
 
             <View style={s.topCenter}>
-              <Ionicons name="location-outline" size={13} color={D.primary} />
+              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.90)" />
               <Text style={s.topCenterText}>
                 Training at {workoutMode === "gym" ? "the Gym" : "Home"}
               </Text>
@@ -452,7 +452,7 @@ export default function Workout() {
               style={s.topMenuBtn}
               onPress={() => router.push("/Analytics")}
             >
-              <Ionicons name="stats-chart" size={15} color="#fff" />
+              <Ionicons name="menu" size={17} color="#fff" />
             </TouchableOpacity>
           </View>
         </FadeTranslate>
@@ -477,7 +477,7 @@ export default function Workout() {
               <TextInput
                 style={s.searchInput}
                 placeholder={isCaching ? "" : "Search Workouts & Exercises"}
-                placeholderTextColor="rgba(255,255,255,0.38)"
+                placeholderTextColor="rgba(255,255,255,0.45)"
                 value={search}
                 onChangeText={handleSearchChange}
                 returnKeyType="search"
@@ -695,42 +695,40 @@ const s = StyleSheet.create({
   // Top bar
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, marginBottom: 18,
+    paddingHorizontal: H_PAD, marginBottom: 16,
   },
   topAvatar: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.10)",
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: "#161618",
     alignItems: "center", justifyContent: "center",
   },
-  topAvatarLetter: { color: "#fff", fontFamily: theme.bold, fontSize: 15 },
+  topAvatarLetter: { color: "#fff", fontFamily: theme.semibold, fontSize: 15 },
   topCenter: {
     flexDirection: "row", alignItems: "center", gap: 5,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderRadius: 999, paddingVertical: 7, paddingHorizontal: 13,
   },
   topCenterText: {
-    color: "rgba(255,255,255,0.85)", fontFamily: theme.medium, fontSize: 12,
+    color: "rgba(255,255,255,0.90)", fontFamily: theme.medium, fontSize: 12.5,
   },
   topMenuBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: "#161618",
     alignItems: "center", justifyContent: "center",
   },
 
   // Hello header
   helloWrap: { paddingHorizontal: H_PAD, marginBottom: 16 },
   hello: {
-    color: D.text, fontFamily: theme.bold, fontSize: 28, letterSpacing: -0.5,
+    color: D.text, fontFamily: theme.semibold, fontSize: 28, letterSpacing: -0.3,
   },
   helloSub: {
-    color: "rgba(255,255,255,0.45)", fontFamily: theme.medium, fontSize: 13, marginTop: 3,
+    color: "#8E8E93", fontFamily: theme.regular, fontSize: 13, marginTop: 4,
   },
 
   // Search
   searchBar: {
     flexDirection: "row", alignItems: "center", gap: 10,
     marginHorizontal: H_PAD, marginBottom: 16,
-    backgroundColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "#161618",
     borderRadius: 999, paddingHorizontal: 16, height: 44,
   },
   searchInputWrap: { flex: 1, justifyContent: "center" },
@@ -751,9 +749,8 @@ const s = StyleSheet.create({
   resultsList: { gap: 12 },
   exerciseRow: {
     flexDirection: "row", alignItems: "center", gap: 13,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
-    borderRadius: 18, padding: 10, paddingRight: 14,
+    backgroundColor: "#161618",
+    borderRadius: 16, padding: 10, paddingRight: 14,
   },
   exerciseThumbWrap: {
     width: 64, height: 64, borderRadius: 14,
@@ -762,11 +759,11 @@ const s = StyleSheet.create({
   },
   exerciseThumb: { width: "100%", height: "100%" },
   exerciseInfo: { flex: 1, gap: 7 },
-  exerciseName: { color: D.text, fontFamily: theme.bold, fontSize: 14.5, lineHeight: 19 },
+  exerciseName: { color: D.text, fontFamily: theme.semibold, fontSize: 14.5, lineHeight: 19 },
   exercisePillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   exercisePill: {
     flexDirection: "row", alignItems: "center", gap: 4,
-    backgroundColor: "rgba(255,255,255,0.07)",
+    backgroundColor: "#1A1A1C",
     paddingHorizontal: 8, paddingVertical: 3.5, borderRadius: 8,
   },
   exercisePillText: { color: "rgba(255,255,255,0.55)", fontFamily: theme.medium, fontSize: 10.5 },
@@ -776,18 +773,18 @@ const s = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.05)",
     justifyContent: "center", alignItems: "center",
   },
-  emptyTitle: { color: D.text, fontFamily: theme.bold, fontSize: 17 },
+  emptyTitle: { color: D.text, fontFamily: theme.semibold, fontSize: 17 },
   emptyText: { color: D.sub, fontFamily: theme.medium, fontSize: 14, textAlign: "center" },
 
   // Filter pills
-  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 22, gap: 8 },
+  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 24, gap: 8 },
   pill: {
-    backgroundColor: "rgba(255,255,255,0.07)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
-    paddingHorizontal: 18, paddingVertical: 9, borderRadius: 999,
+    backgroundColor: "#161618",
+    height: 36, justifyContent: "center",
+    paddingHorizontal: 18, borderRadius: 999,
   },
-  pillActive: { backgroundColor: D.primary, borderColor: D.primary },
-  pillText: { color: "rgba(255,255,255,0.80)", fontFamily: theme.medium, fontSize: 13 },
+  pillActive: { backgroundColor: D.primary },
+  pillText: { color: "rgba(255,255,255,0.70)", fontFamily: theme.medium, fontSize: 13 },
   pillTextActive: { color: "#000", fontFamily: theme.semibold },
 
   // Section header
@@ -796,14 +793,13 @@ const s = StyleSheet.create({
     paddingHorizontal: H_PAD, marginBottom: 16,
   },
   sectionTitle: {
-    color: D.text, fontFamily: theme.bold, fontSize: 20, letterSpacing: -0.3,
+    color: D.text, fontFamily: theme.semibold, fontSize: 20, letterSpacing: -0.3,
   },
 
   // Home / Gym sliding toggle
   modeToggle: {
     flexDirection: "row",
-    backgroundColor: "rgba(255,255,255,0.07)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "#161618",
     borderRadius: 999, padding: 3,
   },
   modeThumb: {
@@ -823,7 +819,7 @@ const s = StyleSheet.create({
   modeSegTextActive: { color: "#000" },
 
   // Routine cards
-  feedList: { paddingHorizontal: H_PAD, gap: 18 },
+  feedList: { paddingHorizontal: H_PAD, gap: 16 },
   card: {
     width: CARD_W, height: CARD_H,
     backgroundColor: "#0D0D0D",
@@ -835,11 +831,11 @@ const s = StyleSheet.create({
   },
   cardTimeRow: { flexDirection: "row", alignItems: "baseline", gap: 8 },
   cardTime: {
-    color: "#fff", fontFamily: theme.bold, fontSize: 24, letterSpacing: -0.4,
+    color: "#fff", fontFamily: theme.semibold, fontSize: 24, letterSpacing: -0.4,
   },
   cardDiff: { fontFamily: theme.semibold, fontSize: 12 },
 
-  avatarRow: { flexDirection: "row", alignItems: "center", marginTop: 9 },
+  avatarRow: { flexDirection: "row", alignItems: "center", marginTop: 7 },
   stackAv: {
     width: 24, height: 24, borderRadius: 12,
     borderWidth: 1.5, borderColor: "rgba(0,0,0,0.85)",
@@ -850,36 +846,38 @@ const s = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
     marginLeft: -6, borderWidth: 1.5, borderColor: "rgba(0,0,0,0.85)",
   },
-  countPillText: { color: "#fff", fontFamily: theme.bold, fontSize: 10 },
+  countPillText: { color: "#fff", fontFamily: theme.semibold, fontSize: 10 },
 
   starCircle: {
-    width: 40, height: 40, borderRadius: 20,
+    width: 42, height: 42, borderRadius: 21,
     backgroundColor: "rgba(0,0,0,0.45)",
     borderWidth: 1, borderColor: "rgba(255,255,255,0.14)",
     alignItems: "center", justifyContent: "center",
   },
-  starCircleFeatured: {
-    backgroundColor: D.primary,
-    borderColor: D.primary,
-  },
 
-  // Frosted glass bar
+  // Frosted glass bar — light glass like the reference
   glassBarWrap: {
-    position: "absolute", bottom: 14, left: 14, right: 14,
-    borderRadius: 26, overflow: "hidden",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.16)",
+    position: "absolute", bottom: 12, left: 12, right: 12,
+    borderRadius: 30, overflow: "hidden",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.28)",
   },
   glassBar: {
     flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: "rgba(30,30,30,0.38)",
-    paddingVertical: 12, paddingLeft: 18, paddingRight: 12,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    paddingVertical: 11, paddingLeft: 18, paddingRight: 10,
   },
   glassTextCol: { flex: 1, gap: 2 },
-  glassTitle: { color: "#fff", fontFamily: theme.bold, fontSize: 17.5, letterSpacing: -0.2 },
-  glassSub: { color: "rgba(255,255,255,0.62)", fontFamily: theme.medium, fontSize: 11.5 },
+  glassTitle: {
+    color: "#fff", fontFamily: theme.semibold, fontSize: 17.5, letterSpacing: -0.2,
+    textShadowColor: "rgba(0,0,0,0.45)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6,
+  },
+  glassSub: {
+    color: "rgba(255,255,255,0.85)", fontFamily: theme.medium, fontSize: 11,
+    textShadowColor: "rgba(0,0,0,0.45)", textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 5,
+  },
   arrowCircle: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: D.primary,
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: "#fff",
     alignItems: "center", justifyContent: "center",
   },
 
