@@ -43,6 +43,7 @@ const CARD_H = CARD_W * 1.0;            // square cards like the reference UI
 const CARD_RADIUS = 40;
 const ITEM_H = CARD_H + 16;             // card + feed gap
 const MAX_RESULTS = 30;
+const PULL_THRESHOLD = 74;              // overscroll distance that triggers a refresh
 
 const AVATARS = [
   require("@/assets/avatars/avatar1.jpg"),
@@ -54,7 +55,6 @@ const AVATARS = [
   require("@/assets/avatars/avatar7.jpg"),
 ];
 
-const FEATURED_IDS = ["core_30day", "quick_hiit", "full_body_gym"];
 const FILTER_PILLS = ["All", "Strength", "HIIT", "Core", "Cardio"];
 
 const formatCount = (n: number) =>
@@ -95,7 +95,44 @@ const D = {
   primary: "#AAFB05",
   text:    "#fff",
   sub:     "#8E8E93",
+  pill:    "#17191B",
 };
+
+// ── FilterPill ────────────────────────────────────────────────────────────────
+// In CSS this is a `transition` on `background-color` and `padding`. RN has no
+// CSS transitions, so we interpolate an Animated value instead.
+const FilterPill = React.memo(function FilterPill({
+  label, active, onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const anim = useRef(new Animated.Value(active ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: active ? 1 : 0,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false, // color + padding aren't native-drivable
+    }).start();
+  }, [active, anim]);
+
+  const backgroundColor = anim.interpolate({ inputRange: [0, 1], outputRange: [D.pill, D.primary] });
+  const paddingHorizontal = anim.interpolate({ inputRange: [0, 1], outputRange: [20, 30] });
+  const color = anim.interpolate({ inputRange: [0, 1], outputRange: ["#C8C8C8", "#000000"] });
+
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress}>
+      <Animated.View style={[s.pill, { backgroundColor, paddingHorizontal }]}>
+        <Animated.Text style={[s.pillText, { color, fontFamily: active ? theme.semibold : theme.medium }]}>
+          {label}
+        </Animated.Text>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+});
 
 // ── RoutineCard (outside Workout to avoid recreation) ─────────────────────────
 const RoutineCard = React.memo(function RoutineCard({
@@ -109,7 +146,6 @@ const RoutineCard = React.memo(function RoutineCard({
   const av0 = AVATARS[(idx * 3 + 0) % AVATARS.length];
   const av1 = AVATARS[(idx * 3 + 1) % AVATARS.length];
   const av2 = AVATARS[(idx * 3 + 2) % AVATARS.length];
-  const isFeatured = FEATURED_IDS.includes(routine.id);
 
   // avatar bubble-in — useNativeDriver: true (scale + opacity)
   const av2Anim = useRef(new Animated.Value(0)).current;
@@ -200,11 +236,7 @@ const RoutineCard = React.memo(function RoutineCard({
             </View>
 
             <View style={s.starCircle}>
-              <Ionicons
-                name="star"
-                size={16}
-                color={isFeatured ? D.primary : "#fff"}
-              />
+              <Ionicons name="star" size={16} color="#fff" />
             </View>
           </View>
 
@@ -257,11 +289,22 @@ export default function Workout() {
   const [search, setSearch] = useState("");
   const [activeFilter, setActiveFilter] = useState("All");
   const [focusedCard, setFocusedCard] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   // Home vs Gym — defaulted from the onboarding equipment answer
   const [workoutMode, setWorkoutMode] = useState<"home" | "gym">("home");
 
   const scrollYRef = useRef(0);
   const feedListYRef = useRef(0);
+
+  // Animated scroll position — drives the sticky-header backdrop + pull-to-refresh
+  const scrollY = useRef(new Animated.Value(0)).current;
+  // Search-focus transition (avatar/menu slide out, search widens)
+  const focusAnim = useRef(new Animated.Value(0)).current;
+  // Pull-to-refresh spinner + content spacer
+  const spinValue = useRef(new Animated.Value(0)).current;
+  const refreshAnim = useRef(new Animated.Value(0)).current;
+  const refreshingRef = useRef(false);
+  const spinLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
   // Exercise pool — loaded from DB cache, or downloaded once on first launch
   const [exPool, setExPool] = useState<ExerciseInfo[]>([]);
@@ -271,14 +314,14 @@ export default function Workout() {
   const isSearching = search.trim().length > 0;
   const isCaching = !poolReady;
 
+  const HEADER_H = insets.top + 64;
+
   // Local user name + default workout mode from onboarding equipment answer
   useEffect(() => {
     (async () => {
       try {
         const u = await User.getUserDetails(database);
         if (u?.name) setUserName(u.name.split(" ")[0]);
-        // "Home Workouts" → home; "Basic Equipment" / "Gym Access" → gym
-        // (equipment routines — dumbbells etc. — live on the gym side)
         if (u?.equipmentAccess && u.equipmentAccess !== "Home Workouts") setWorkoutMode("gym");
       } catch {}
     })();
@@ -315,11 +358,7 @@ export default function Workout() {
         (workoutMode === "gym") === isGymRoutine(r) &&
         matchesFilter(r, activeFilter)
     );
-    return [...list].sort((a, b) => {
-      const fa = FEATURED_IDS.includes(a.id) ? 1 : 0;
-      const fb = FEATURED_IDS.includes(b.id) ? 1 : 0;
-      return fb - fa || (b.completions ?? 0) - (a.completions ?? 0);
-    });
+    return [...list].sort((a, b) => (b.completions ?? 0) - (a.completions ?? 0));
   }, [workoutMode, activeFilter]);
 
   const switchFilter = useCallback((pill: string) => {
@@ -359,6 +398,16 @@ export default function Workout() {
     setSearch(text);
   }, [search]);
 
+  // ── Search focus: slide the avatar + menu out, widen the search bar ──────────
+  const animateFocus = useCallback((to: number) => {
+    Animated.timing(focusAnim, {
+      toValue: to,
+      duration: 220,
+      easing: to ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: false, // animating width/margins (layout)
+    }).start();
+  }, [focusAnim]);
+
   const openRoutine = useCallback((routineId: string) => {
     router.push({ pathname: "/RoutineDetail", params: { routineId } });
   }, []);
@@ -376,6 +425,29 @@ export default function Workout() {
     });
   }, []);
 
+  // ── Pull-to-refresh ──────────────────────────────────────────────────────────
+  const onRefresh = useCallback(() => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setRefreshing(true);
+
+    spinValue.setValue(0);
+    spinLoopRef.current = Animated.loop(
+      Animated.timing(spinValue, { toValue: 1, duration: 750, easing: Easing.linear, useNativeDriver: false })
+    );
+    spinLoopRef.current.start();
+    Animated.timing(refreshAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+
+    const minSpin = new Promise((res) => setTimeout(res, 900));
+    Promise.all([ExerciseApi.getAllExercises().catch(() => {}), minSpin]).finally(() => {
+      spinLoopRef.current?.stop();
+      Animated.timing(refreshAnim, { toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: false }).start(() => {
+        refreshingRef.current = false;
+        setRefreshing(false);
+      });
+    });
+  }, [refreshAnim, spinValue]);
+
   const onMainScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const sy = e.nativeEvent.contentOffset.y;
     scrollYRef.current = sy;
@@ -387,9 +459,29 @@ export default function Workout() {
     setFocusedCard((prev) => prev !== newIdx ? newIdx : prev);
   }, [routines.length]);
 
+  const onScrollEndDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    if (e.nativeEvent.contentOffset.y <= -PULL_THRESHOLD) onRefresh();
+  }, [onRefresh]);
+
   const onFeedListLayout = useCallback((e: any) => {
     feedListYRef.current = e.nativeEvent.layout.y;
   }, []);
+
+  // ── Animated styles ──────────────────────────────────────────────────────────
+  const headerBgOpacity = scrollY.interpolate({ inputRange: [0, 28], outputRange: [0, 1], extrapolate: "clamp" });
+
+  const sideWidth = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [44, 0] });
+  const sideMargin = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] });
+  const sideOpacity = focusAnim.interpolate({ inputRange: [0, 0.55, 1], outputRange: [1, 0, 0] });
+  const avatarTX = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -44] });
+  const menuTX = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 44] });
+  const searchHeight = focusAnim.interpolate({ inputRange: [0, 1], outputRange: [44, 50] });
+
+  const pullOpacity = scrollY.interpolate({ inputRange: [-PULL_THRESHOLD, -24, 0], outputRange: [1, 0, 0], extrapolate: "clamp" });
+  const pullScale = scrollY.interpolate({ inputRange: [-PULL_THRESHOLD, -24], outputRange: [1, 0.5], extrapolate: "clamp" });
+  const pullRotate = scrollY.interpolate({ inputRange: [-130, 0], outputRange: ["-200deg", "10deg"], extrapolate: "clamp" });
+  const spinRotate = spinValue.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "360deg"] });
+  const spacerHeight = refreshAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 70] });
 
   return (
     <View style={s.container}>
@@ -403,74 +495,37 @@ export default function Workout() {
         pointerEvents="none"
       />
 
-      <ScrollView
+      {/* pull-to-refresh indicator (behind the scroll, revealed on overscroll) */}
+      {refreshing ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[s.refreshIndicator, { top: HEADER_H + 14, opacity: refreshAnim, transform: [{ rotate: spinRotate }] }]}
+        >
+          <Ionicons name="reload" size={22} color={D.primary} />
+        </Animated.View>
+      ) : (
+        <Animated.View
+          pointerEvents="none"
+          style={[s.refreshIndicator, { top: HEADER_H + 14, opacity: pullOpacity, transform: [{ rotate: pullRotate }, { scale: pullScale }] }]}
+        >
+          <Ionicons name="reload" size={22} color={D.primary} />
+        </Animated.View>
+      )}
+
+      <Animated.ScrollView
         style={s.scroll}
-        contentContainerStyle={{ paddingTop: insets.top + 22, paddingBottom: insets.bottom + 110 }}
+        contentContainerStyle={{ paddingTop: HEADER_H + 8, paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        onScroll={onMainScroll}
-        scrollEventThrottle={50}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true, listener: onMainScroll }
+        )}
+        onScrollEndDrag={onScrollEndDrag}
+        scrollEventThrottle={16}
       >
-        {/* ── Top bar — avatar · mode · analytics ── */}
-        <FadeTranslate order={0} direction="y" translateYFrom={-16}>
-          <View style={s.topBar}>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={s.topAvatar}
-              onPress={() => navigation.navigate("profile")}
-              accessibilityRole="button"
-              accessibilityLabel="Open profile"
-            >
-              <Image source={AVATARS[0]} style={s.topAvatarImg} />
-            </TouchableOpacity>
-
-            <View style={s.searchBar}>
-              {isCaching ? (
-                <ActivityIndicator size="small" color={D.primary} />
-              ) : (
-                <Ionicons name="search" size={18} color="#A0A0A4" />
-              )}
-              <View style={s.searchInputWrap}>
-                <TextInput
-                  style={s.searchInput}
-                  placeholder={isCaching ? "" : "Search workouts & exercises"}
-                  placeholderTextColor="#A0A0A4"
-                  value={search}
-                  onChangeText={handleSearchChange}
-                  returnKeyType="search"
-                  autoCorrect={false}
-                  selectionColor={D.primary}
-                />
-                {isCaching && search.length === 0 && (
-                  <Animated.Text
-                    pointerEvents="none"
-                    style={[s.cachingPlaceholder, { opacity: pulseAnim }]}
-                    numberOfLines={1}
-                  >
-                    Caching exercises...
-                  </Animated.Text>
-                )}
-              </View>
-              {search.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => handleSearchChange("")}
-                  activeOpacity={0.7}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.4)" />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <TouchableOpacity
-              activeOpacity={0.75}
-              style={s.topMenuBtn}
-              onPress={() => router.push("/Analytics")}
-            >
-              <Ionicons name="menu" size={19} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </FadeTranslate>
+        {/* refresh spacer — keeps the spinner visible while reloading */}
+        <Animated.View style={{ height: spacerHeight }} />
 
         {/* ── Hello header ── */}
         <FadeTranslate order={0} delay={60} direction="y" translateYFrom={-10}>
@@ -570,27 +625,21 @@ export default function Workout() {
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={s.pillScroll}
               >
-                {FILTER_PILLS.map((pill) => {
-                  const active = activeFilter === pill;
-                  return (
-                    <TouchableOpacity
-                      key={pill}
-                      activeOpacity={0.85}
-                      onPress={() => switchFilter(pill)}
-                      style={[s.pill, active && s.pillActive]}
-                    >
-                      <Text style={[s.pillText, active && s.pillTextActive]}>{pill}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
+                {FILTER_PILLS.map((pill) => (
+                  <FilterPill
+                    key={pill}
+                    label={pill}
+                    active={activeFilter === pill}
+                    onPress={() => switchFilter(pill)}
+                  />
+                ))}
               </ScrollView>
             </FadeTranslate>
 
-            {/* ── Section header + Home/Gym toggle ── */}
+            {/* ── Section header + Create ── */}
             <FadeTranslate order={0} delay={200} direction="y" translateYFrom={14}>
               <View style={s.sectionRow}>
                 <Text style={s.sectionTitle}>Workout Routines</Text>
-
                 <Text style={s.createText}>Create</Text>
               </View>
             </FadeTranslate>
@@ -614,7 +663,94 @@ export default function Workout() {
             </View>
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
+
+      {/* ── Sticky top bar — avatar · search · menu ── */}
+      <View style={[s.header, { paddingTop: insets.top + 8 }]}>
+        <Animated.View pointerEvents="none" style={[s.headerBg, { height: HEADER_H + 28, opacity: headerBgOpacity }]}>
+          <BlurView
+            experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
+            intensity={Platform.OS === "ios" ? 26 : 18}
+            tint="dark"
+            style={[StyleSheet.absoluteFill, { height: HEADER_H }]}
+          />
+          <LinearGradient
+            colors={["rgba(0,0,0,0.9)", "rgba(0,0,0,0.55)", "transparent"]}
+            locations={[0, 0.62, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        <FadeTranslate order={0} direction="y" translateYFrom={-16}>
+          <View style={s.topBar}>
+            <Animated.View
+              style={[s.sideWrap, { width: sideWidth, marginRight: sideMargin, opacity: sideOpacity, transform: [{ translateX: avatarTX }] }]}
+            >
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={s.topAvatar}
+                onPress={() => navigation.navigate("profile")}
+                accessibilityRole="button"
+                accessibilityLabel="Open profile"
+              >
+                <Image source={AVATARS[0]} style={s.topAvatarImg} />
+              </TouchableOpacity>
+            </Animated.View>
+
+            <Animated.View style={[s.searchBar, { height: searchHeight }]}>
+              {isCaching ? (
+                <ActivityIndicator size="small" color={D.primary} />
+              ) : (
+                <Ionicons name="search" size={18} color="#A0A0A4" />
+              )}
+              <View style={s.searchInputWrap}>
+                <TextInput
+                  style={s.searchInput}
+                  placeholder={isCaching ? "" : "Search workouts & exercises"}
+                  placeholderTextColor="#A0A0A4"
+                  value={search}
+                  onChangeText={handleSearchChange}
+                  onFocus={() => animateFocus(1)}
+                  onBlur={() => animateFocus(0)}
+                  returnKeyType="search"
+                  autoCorrect={false}
+                  selectionColor={D.primary}
+                />
+                {isCaching && search.length === 0 && (
+                  <Animated.Text
+                    pointerEvents="none"
+                    style={[s.cachingPlaceholder, { opacity: pulseAnim }]}
+                    numberOfLines={1}
+                  >
+                    Caching exercises...
+                  </Animated.Text>
+                )}
+              </View>
+              {search.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => handleSearchChange("")}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.4)" />
+                </TouchableOpacity>
+              )}
+            </Animated.View>
+
+            <Animated.View
+              style={[s.sideWrap, { width: sideWidth, marginLeft: sideMargin, opacity: sideOpacity, transform: [{ translateX: menuTX }] }]}
+            >
+              <TouchableOpacity
+                activeOpacity={0.75}
+                style={s.topMenuBtn}
+                onPress={() => router.push("/Analytics")}
+              >
+                <Ionicons name="menu" size={19} color="#fff" />
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+        </FadeTranslate>
+      </View>
     </View>
   );
 }
@@ -623,11 +759,22 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: D.bg },
   scroll: { flex: 1 },
 
-  // Top bar
-  topBar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, marginBottom: 18, gap: 12,
+  // Sticky header
+  header: {
+    position: "absolute",
+    top: 0, left: 0, right: 0,
+    zIndex: 20,
+    paddingBottom: 12,
   },
+  headerBg: {
+    position: "absolute",
+    top: 0, left: 0, right: 0,
+  },
+  topBar: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: H_PAD,
+  },
+  sideWrap: { overflow: "hidden", alignItems: "center", justifyContent: "center" },
   topAvatar: {
     width: 44, height: 44, borderRadius: 22,
     backgroundColor: "#161618", overflow: "hidden",
@@ -640,8 +787,16 @@ const s = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
 
+  // Pull-to-refresh
+  refreshIndicator: {
+    position: "absolute",
+    left: 0, right: 0,
+    alignItems: "center",
+    zIndex: 5,
+  },
+
   // Hello header
-  helloWrap: { paddingHorizontal: H_PAD, marginBottom: 18 },
+  helloWrap: { paddingHorizontal: H_PAD, marginBottom: 18, marginTop: 2 },
   hello: {
     color: D.text, fontFamily: theme.semibold, fontSize: 30, lineHeight: 35, letterSpacing: -0.6,
   },
@@ -655,7 +810,7 @@ const s = StyleSheet.create({
     flexDirection: "row", alignItems: "center", gap: 10,
     backgroundColor: "#17191B",
     borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
-    borderRadius: 22, paddingHorizontal: 15, height: 44,
+    borderRadius: 22, paddingHorizontal: 15,
   },
   searchInputWrap: { flex: 1, justifyContent: "center" },
   searchInput: {
@@ -705,13 +860,10 @@ const s = StyleSheet.create({
   // Filter pills
   pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 20, gap: 10 },
   pill: {
-    backgroundColor: "#17191B",
-    height: 46, justifyContent: "center",
-    paddingHorizontal: 22, borderRadius: 23,
+    height: 46, justifyContent: "center", alignItems: "center",
+    borderRadius: 23,
   },
-  pillActive: { backgroundColor: D.primary },
-  pillText: { color: "#C8C8C8", fontFamily: theme.medium, fontSize: 14 },
-  pillTextActive: { color: "#000", fontFamily: theme.semibold },
+  pillText: { fontFamily: theme.medium, fontSize: 14 },
 
   // Section header
   sectionRow: {

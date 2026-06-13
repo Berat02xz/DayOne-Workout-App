@@ -21,13 +21,14 @@ import { ROUTINES, type RoutineExercise } from "@/constants/workoutRoutines";
 import { SquircleSurface } from "@/components/ui/Squircle";
 import { theme } from "@/constants/theme";
 
-const H_PAD = 18;
+const H_PAD = 20;
 const CARD_MARGIN = 16;
-const SHEET_OVERLAP = 54;
-const SUMMARY_H = 158;
-const SUMMARY_OVERHANG = 86;          // how far the card rises above the sheet
-const SUMMARY_RADIUS = 34;
-const CTA_HEIGHT = 58;
+const SHEET_RADIUS = 44;
+const CARD_RADIUS = 36;
+const CARD_HEIGHT = 168;
+const CARD_OVERHANG = 92; // how far the card floats above the sheet
+const SHEET_OVERLAP = 52; // how far the sheet rides up over the hero
+const CTA_HEIGHT = 62;
 
 const TRAINER_AVATARS = [
   require("@/assets/avatars/avatar1.jpg"),
@@ -40,14 +41,13 @@ const TRAINER_AVATARS = [
 ];
 
 const C = {
-  background: "#000000",
-  sheet: "#000000",
-  card: "#161719",
-  surface: "#141517",
+  bg: "#000000",
+  card: "#17181A",
+  surface: "#121315",
   text: "#FFFFFF",
-  muted: "#A3A5A8",
-  faint: "#76797C",
-  border: "rgba(255,255,255,0.07)",
+  muted: "#9B9DA1",
+  faint: "#6E7174",
+  hairline: "rgba(255,255,255,0.07)",
   primary: theme.primary,
 };
 
@@ -62,7 +62,8 @@ function getTrainerAvatar(routineId: string) {
   return TRAINER_AVATARS[index % TRAINER_AVATARS.length];
 }
 
-function StatPill({
+/** Big, fully-rounded stat chip used in the info row. */
+function Stat({
   icon,
   label,
 }: {
@@ -70,9 +71,9 @@ function StatPill({
   label: string;
 }) {
   return (
-    <View style={s.statPill}>
-      <Ionicons name={icon} size={14} color="#D9D9D9" />
-      <Text style={s.statPillText}>{label}</Text>
+    <View style={s.stat}>
+      <Ionicons name={icon} size={15} color={C.primary} />
+      <Text style={s.statText}>{label}</Text>
     </View>
   );
 }
@@ -91,20 +92,22 @@ function ExerciseRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`Open ${exercise.name}`}
-      style={({ pressed }) => [s.exerciseRow, pressed && s.exerciseRowPressed]}
+      style={({ pressed }) => [s.exerciseRow, pressed && s.rowPressed]}
     >
       <View style={s.exerciseThumb}>
         {exercise.gifUrl ? (
-          <Image source={{ uri: exercise.gifUrl }} style={s.exerciseImage} resizeMode="cover" />
+          <Image source={{ uri: exercise.gifUrl }} style={s.fill} resizeMode="cover" />
         ) : (
           <Ionicons name="barbell-outline" size={20} color={C.faint} />
         )}
       </View>
 
       <View style={s.exerciseCopy}>
-        <Text style={s.exerciseName} numberOfLines={1}>{exercise.name}</Text>
+        <Text style={s.exerciseName} numberOfLines={1}>
+          {exercise.name}
+        </Text>
         <Text style={s.exerciseMeta} numberOfLines={1}>
-          {exercise.sets} sets · {exercise.reps} · {exercise.restSeconds}s rest
+          {exercise.sets} × {exercise.reps}
         </Text>
       </View>
 
@@ -123,8 +126,8 @@ export default function RoutineDetail() {
   const [saved, setSaved] = useState(false);
 
   const routine = ROUTINES.find((item) => item.id === routineId);
-  const heroHeight = Math.min(438, Math.max(370, height * 0.52));
-  const summaryWidth = width - CARD_MARGIN * 2;
+  const heroHeight = Math.min(470, Math.max(390, height * 0.55));
+  const cardWidth = width - CARD_MARGIN * 2;
 
   const totalCalories = useMemo(
     () =>
@@ -148,7 +151,7 @@ export default function RoutineDetail() {
     );
   }
 
-  const showToggle = routine.description.length > 90;
+  const showToggle = routine.description.length > 92;
 
   const heroTranslate = scrollY.interpolate({
     inputRange: [-heroHeight, 0, heroHeight],
@@ -207,34 +210,34 @@ export default function RoutineDetail() {
               ]}
             >
               {routine.image ? (
-                <Image source={{ uri: routine.image }} style={s.heroImage} resizeMode="cover" />
+                <Image source={{ uri: routine.image }} style={s.fill} resizeMode="cover" />
               ) : (
                 <LinearGradient colors={routine.gradient} style={StyleSheet.absoluteFillObject} />
               )}
             </Animated.View>
 
             <LinearGradient
-              colors={["rgba(0,0,0,0.28)", "rgba(0,0,0,0)", "rgba(0,0,0,0.55)"]}
-              locations={[0, 0.55, 1]}
+              colors={["rgba(0,0,0,0.34)", "rgba(0,0,0,0)", "rgba(0,0,0,0.6)"]}
+              locations={[0, 0.5, 1]}
               style={StyleSheet.absoluteFillObject}
             />
           </BlurTargetView>
 
-          <View style={[s.heroHeader, { top: insets.top + 14 }]}>
+          <View style={[s.heroHeader, { top: insets.top + 12 }]}>
             <Pressable
               onPress={() => router.back()}
               accessibilityRole="button"
               accessibilityLabel="Go back"
-              style={({ pressed }) => [s.headerButtonHit, pressed && s.pressed]}
+              style={({ pressed }) => [s.iconHit, pressed && s.pressed]}
             >
               <BlurView
                 blurTarget={heroBlurTarget}
                 blurMethod="dimezisBlurViewSdk31Plus"
-                intensity={38}
+                intensity={36}
                 tint="systemUltraThinMaterialDark"
-                style={s.headerButton}
+                style={s.iconButton}
               >
-                <Ionicons name="chevron-back" size={22} color={C.text} />
+                <Ionicons name="chevron-back" size={23} color={C.text} />
               </BlurView>
             </Pressable>
 
@@ -244,14 +247,14 @@ export default function RoutineDetail() {
               onPress={handleShare}
               accessibilityRole="button"
               accessibilityLabel="Share routine"
-              style={({ pressed }) => [s.headerButtonHit, pressed && s.pressed]}
+              style={({ pressed }) => [s.iconHit, pressed && s.pressed]}
             >
               <BlurView
                 blurTarget={heroBlurTarget}
                 blurMethod="dimezisBlurViewSdk31Plus"
-                intensity={38}
+                intensity={36}
                 tint="systemUltraThinMaterialDark"
-                style={s.headerButton}
+                style={s.iconButton}
               >
                 <Ionicons name="share-outline" size={20} color={C.text} />
               </BlurView>
@@ -261,103 +264,99 @@ export default function RoutineDetail() {
 
         {/* ── Sheet ── */}
         <View style={s.sheet}>
-          {/* Summary squircle card (overlaps the hero) */}
-          <View style={[s.summaryCard, { width: summaryWidth, height: SUMMARY_H }]}>
+          {/* Floating identity card */}
+          <View style={[s.card, { width: cardWidth, height: CARD_HEIGHT }]}>
             <SquircleSurface
-              width={summaryWidth}
-              height={SUMMARY_H}
-              cornerRadius={SUMMARY_RADIUS}
+              width={cardWidth}
+              height={CARD_HEIGHT}
+              cornerRadius={CARD_RADIUS}
               fill={C.card}
-              strokeColor="rgba(255,255,255,0.06)"
+              strokeColor="rgba(255,255,255,0.05)"
             />
-            <View style={s.summaryThumb}>
+
+            <View style={s.cardThumb}>
               {routine.image ? (
-                <Image source={{ uri: routine.image }} style={s.summaryImage} resizeMode="cover" />
+                <Image source={{ uri: routine.image }} style={s.fill} resizeMode="cover" />
               ) : (
                 <LinearGradient colors={routine.gradient} style={StyleSheet.absoluteFillObject} />
               )}
             </View>
 
-            <View style={s.summaryCopy}>
-              <Text style={s.routineName} numberOfLines={2}>{routine.name}</Text>
+            <View style={s.cardCopy}>
+              <Text style={s.routineName} numberOfLines={2}>
+                {routine.name}
+              </Text>
 
               <View style={s.metaRow}>
                 <Text style={s.difficulty}>{routine.difficulty}</Text>
                 {!!routine.completions && (
                   <>
-                    <Ionicons name="star" size={12} color={C.primary} style={{ marginLeft: 9 }} />
-                    <Text style={s.completions}>{compactCount(routine.completions)}+ done</Text>
+                    <View style={s.dot} />
+                    <Ionicons name="star" size={13} color={C.primary} />
+                    <Text style={s.completions}>{compactCount(routine.completions)}+</Text>
                   </>
                 )}
               </View>
 
               <View style={s.trainerRow}>
                 <Image source={getTrainerAvatar(routine.id)} style={s.trainerAvatar} />
-                <View style={s.trainerCopy}>
-                  <Text style={s.trainerName} numberOfLines={1}>
-                    {routine.athlete?.name ?? "Invicta Training"}
-                  </Text>
-                  <Text style={s.trainerRole} numberOfLines={1}>
-                    {routine.athlete?.title ?? "Routine by Invicta athlete"}
-                  </Text>
-                </View>
+                <Text style={s.trainerName} numberOfLines={1}>
+                  {routine.athlete?.name ?? "Invicta Training"}
+                </Text>
               </View>
             </View>
           </View>
 
           {/* Description */}
-          <View style={s.section}>
-            <Text style={s.sectionTitle}>Description</Text>
-            <Text style={s.description} numberOfLines={expanded ? undefined : 3}>
-              {routine.description}
-            </Text>
-            {showToggle && (
-              <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={8}>
-                <Text style={s.showMore}>{expanded ? "Show less" : "Show more"}</Text>
-              </Pressable>
-            )}
+          <Text style={s.sectionTitle}>Description</Text>
+          <Text style={s.description} numberOfLines={expanded ? undefined : 3}>
+            {routine.description}
+          </Text>
+          {showToggle && (
+            <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={8}>
+              <Text style={s.showMore}>{expanded ? "Show less" : "Show more"}</Text>
+            </Pressable>
+          )}
 
-            <View style={s.statsRow}>
-              <StatPill icon="barbell-outline" label={`${routine.exercises.length} Exercises`} />
-              <StatPill icon="flame-outline" label={`${totalCalories} Kcal`} />
-              <StatPill icon="time-outline" label={routine.duration} />
-            </View>
+          {/* Stats */}
+          <View style={s.statsRow}>
+            <Stat icon="barbell-outline" label={`${routine.exercises.length} moves`} />
+            <Stat icon="flame-outline" label={`${totalCalories} kcal`} />
+            <Stat icon="time-outline" label={routine.duration} />
           </View>
 
           {/* Exercises */}
-          <View style={s.exerciseSection}>
-            <View style={s.exerciseHeader}>
-              <Text style={s.exerciseTitle}>Exercises</Text>
-              <Text style={s.exerciseCount}>{routine.exercises.length} total</Text>
-            </View>
+          <View style={s.exerciseHeader}>
+            <Text style={s.sectionTitle}>Exercises</Text>
+            <Text style={s.exerciseCount}>{routine.exercises.length}</Text>
+          </View>
 
-            <View style={s.exerciseList}>
-              {routine.exercises.map((exercise, index) => (
-                <ExerciseRow
-                  key={`${exercise.exerciseId}-${index}`}
-                  exercise={exercise}
-                  index={index}
-                  onPress={() => handleExercise(exercise)}
-                />
-              ))}
-            </View>
+          <View style={s.exerciseList}>
+            {routine.exercises.map((exercise, index) => (
+              <ExerciseRow
+                key={`${exercise.exerciseId}-${index}`}
+                exercise={exercise}
+                index={index}
+                onPress={() => handleExercise(exercise)}
+              />
+            ))}
           </View>
         </View>
       </Animated.ScrollView>
 
       {/* ── Bottom action bar ── */}
       <LinearGradient
-        colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.85)", C.sheet]}
+        colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.85)", C.bg]}
         locations={[0, 0.5, 1]}
         style={s.ctaGradient}
         pointerEvents="none"
       />
-      <View style={[s.ctaWrap, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+      <View style={[s.ctaWrap, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <Pressable
           onPress={() => setSaved((v) => !v)}
           accessibilityRole="button"
           accessibilityLabel={saved ? "Remove from saved" : "Save routine"}
-          style={({ pressed }) => [s.saveButtonHit, pressed && s.pressed]}
+          style={({ pressed }) => [s.saveHit, pressed && s.pressed]}
         >
           <BlurView
             experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
@@ -367,7 +366,7 @@ export default function RoutineDetail() {
           >
             <Ionicons
               name={saved ? "bookmark" : "bookmark-outline"}
-              size={22}
+              size={23}
               color={saved ? C.primary : "#fff"}
             />
           </BlurView>
@@ -377,10 +376,9 @@ export default function RoutineDetail() {
           onPress={handleStart}
           accessibilityRole="button"
           accessibilityLabel={`Start ${routine.name}`}
-          style={({ pressed }) => [s.startButton, pressed && s.startButtonPressed]}
+          style={({ pressed }) => [s.startButton, pressed && s.startPressed]}
         >
-          <Text style={s.startButtonText}>Start Workout</Text>
-          <Ionicons name="play" size={13} color="#000000" />
+          <Text style={s.startText}>Start Workout</Text>
         </Pressable>
       </View>
     </View>
@@ -388,22 +386,24 @@ export default function RoutineDetail() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.background },
+  root: { flex: 1, backgroundColor: C.bg },
+  fill: { width: "100%", height: "100%" },
+  pressed: { opacity: 0.7, transform: [{ scale: 0.96 }] },
+  rowPressed: { opacity: 0.7 },
+
   missing: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    backgroundColor: C.background,
+    backgroundColor: C.bg,
   },
   missingTitle: { color: C.text, fontFamily: theme.bold, fontSize: 20 },
   missingButton: { marginTop: 18, padding: 12 },
   missingButtonText: { color: C.primary, fontFamily: theme.bold, fontSize: 15 },
-  pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
 
   // Hero
-  hero: { overflow: "hidden", backgroundColor: C.background },
-  heroImage: { width: "100%", height: "100%" },
+  hero: { overflow: "hidden", backgroundColor: C.bg },
   heroHeader: {
     position: "absolute",
     left: H_PAD,
@@ -412,129 +412,130 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerButtonHit: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
-  headerButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+  iconHit: { width: 50, height: 50, alignItems: "center", justifyContent: "center" },
+  iconButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.24)",
-    backgroundColor: "rgba(10,10,10,0.14)",
+    borderColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(10,10,10,0.12)",
   },
-  headerTitle: { color: C.text, fontFamily: theme.semibold, fontSize: 15 },
+  headerTitle: { color: C.text, fontFamily: theme.semibold, fontSize: 16 },
 
   // Sheet
   sheet: {
     minHeight: 600,
     marginTop: -SHEET_OVERLAP,
-    paddingTop: SUMMARY_H - SUMMARY_OVERHANG + 30,
+    paddingTop: CARD_HEIGHT - CARD_OVERHANG + 34,
     paddingHorizontal: H_PAD,
-    borderTopLeftRadius: 42,
-    borderTopRightRadius: 42,
-    backgroundColor: C.sheet,
+    borderTopLeftRadius: SHEET_RADIUS,
+    borderTopRightRadius: SHEET_RADIUS,
+    backgroundColor: C.bg,
   },
 
-  // Summary squircle card
-  summaryCard: {
+  // Floating identity card
+  card: {
     position: "absolute",
-    top: -SUMMARY_OVERHANG,
+    top: -CARD_OVERHANG,
     left: CARD_MARGIN,
     flexDirection: "row",
     alignItems: "center",
-    paddingLeft: 14,
-    paddingRight: 20,
+    paddingLeft: 16,
+    paddingRight: 22,
   },
-  summaryThumb: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+  cardThumb: {
+    width: 116,
+    height: 116,
+    borderRadius: 58,
     overflow: "hidden",
     backgroundColor: C.surface,
   },
-  summaryImage: { width: "100%", height: "100%" },
-  summaryCopy: { flex: 1, minWidth: 0, marginLeft: 16 },
+  cardCopy: { flex: 1, minWidth: 0, marginLeft: 18 },
   routineName: {
     color: C.text,
     fontFamily: theme.bold,
-    fontSize: 21,
-    lineHeight: 24,
-    letterSpacing: -0.5,
+    fontSize: 24,
+    lineHeight: 27,
+    letterSpacing: -0.6,
   },
-  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
-  difficulty: { color: C.primary, fontFamily: theme.bold, fontSize: 13.5 },
-  completions: { color: C.muted, fontFamily: theme.medium, fontSize: 12, marginLeft: 4 },
-  trainerRow: { flexDirection: "row", alignItems: "center", marginTop: 14 },
-  trainerAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.surface },
-  trainerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
-  trainerName: { color: C.text, fontFamily: theme.semibold, fontSize: 12.5 },
-  trainerRole: { color: C.faint, fontFamily: theme.regular, fontSize: 10.5, marginTop: 1 },
+  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 9, gap: 4 },
+  difficulty: { color: C.primary, fontFamily: theme.bold, fontSize: 14 },
+  dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: C.faint, marginHorizontal: 4 },
+  completions: { color: C.muted, fontFamily: theme.medium, fontSize: 13 },
+  trainerRow: { flexDirection: "row", alignItems: "center", marginTop: 14, gap: 9 },
+  trainerAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: C.surface },
+  trainerName: { flex: 1, color: C.muted, fontFamily: theme.semibold, fontSize: 13 },
 
-  // Description + stats
-  section: { paddingHorizontal: 4 },
-  sectionTitle: { color: C.text, fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.2 },
+  // Description
+  sectionTitle: {
+    color: C.text,
+    fontFamily: theme.bold,
+    fontSize: 22,
+    letterSpacing: -0.4,
+  },
   description: {
-    marginTop: 10,
+    marginTop: 12,
     color: C.muted,
     fontFamily: theme.regular,
-    fontSize: 13.5,
-    lineHeight: 20,
+    fontSize: 14.5,
+    lineHeight: 22,
   },
-  showMore: { color: C.primary, fontFamily: theme.semibold, fontSize: 13, marginTop: 8 },
-  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 },
-  statPill: {
-    minHeight: 40,
+  showMore: { color: C.primary, fontFamily: theme.semibold, fontSize: 13.5, marginTop: 8 },
+
+  // Stats
+  statsRow: { flexDirection: "row", gap: 10, marginTop: 22 },
+  stat: {
+    flex: 1,
+    height: 50,
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    borderRadius: 16,
+    justifyContent: "center",
+    gap: 7,
+    borderRadius: 25,
     backgroundColor: C.surface,
     borderWidth: 1,
-    borderColor: C.border,
+    borderColor: C.hairline,
   },
-  statPillText: { color: "#E6E6E6", fontFamily: theme.medium, fontSize: 12 },
+  statText: { color: "#E6E6E6", fontFamily: theme.medium, fontSize: 13 },
 
   // Exercises
-  exerciseSection: { marginTop: 34 },
   exerciseHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginTop: 36,
     marginBottom: 14,
-    paddingHorizontal: 4,
   },
-  exerciseTitle: { color: C.text, fontFamily: theme.bold, fontSize: 20, letterSpacing: -0.4 },
-  exerciseCount: { color: C.faint, fontFamily: theme.medium, fontSize: 12 },
+  exerciseCount: { color: C.faint, fontFamily: theme.bold, fontSize: 15 },
   exerciseList: { gap: 10 },
   exerciseRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 10,
-    paddingRight: 16,
-    borderRadius: 20,
+    padding: 12,
+    paddingRight: 18,
+    borderRadius: 24,
     backgroundColor: C.surface,
   },
-  exerciseRowPressed: { opacity: 0.7 },
   exerciseThumb: {
     width: 56,
     height: 56,
-    borderRadius: 16,
+    borderRadius: 20,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#0C0D0E",
+    backgroundColor: "#0B0C0D",
   },
-  exerciseImage: { width: "100%", height: "100%" },
-  exerciseCopy: { flex: 1, minWidth: 0, marginLeft: 13 },
-  exerciseName: { color: C.text, fontFamily: theme.semibold, fontSize: 14.5 },
-  exerciseMeta: { color: C.faint, fontFamily: theme.regular, fontSize: 11.5, marginTop: 5 },
-  exerciseIndex: { color: "rgba(255,255,255,0.22)", fontFamily: theme.bold, fontSize: 13 },
+  exerciseCopy: { flex: 1, minWidth: 0, marginLeft: 14 },
+  exerciseName: { color: C.text, fontFamily: theme.semibold, fontSize: 15 },
+  exerciseMeta: { color: C.faint, fontFamily: theme.regular, fontSize: 12.5, marginTop: 5 },
+  exerciseIndex: { color: "rgba(255,255,255,0.2)", fontFamily: theme.bold, fontSize: 14 },
 
   // Bottom action bar
-  ctaGradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: 130 },
+  ctaGradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: 140 },
   ctaWrap: {
     position: "absolute",
     left: H_PAD,
@@ -545,17 +546,17 @@ const s = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  saveButtonHit: { height: CTA_HEIGHT },
+  saveHit: { height: CTA_HEIGHT },
   saveButton: {
     width: 62,
     height: CTA_HEIGHT,
-    borderRadius: 22,
+    borderRadius: 31,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.28)",
-    backgroundColor: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.26)",
+    backgroundColor: "rgba(255,255,255,0.1)",
   },
   startButton: {
     flex: 1,
@@ -563,15 +564,14 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    borderRadius: 22,
+    borderRadius: 31,
     backgroundColor: C.primary,
   },
-  startButtonPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
-  startButtonText: {
+  startPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
+  startText: {
     color: "#000000",
     fontFamily: theme.black,
-    fontSize: 15,
-    letterSpacing: -0.25,
+    fontSize: 16,
+    letterSpacing: -0.2,
   },
 });
