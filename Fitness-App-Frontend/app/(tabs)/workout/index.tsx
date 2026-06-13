@@ -22,6 +22,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { BlurView } from "expo-blur";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { theme } from "@/constants/theme";
 import FadeTranslate from "@/components/ui/FadeTranslate";
@@ -36,13 +37,12 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-const H_PAD = 20;
+const H_PAD = 18;
 const CARD_W = SCREEN_W - H_PAD * 2;
 const CARD_H = CARD_W * 1.0;            // square cards like the reference UI
 const CARD_RADIUS = 40;
 const ITEM_H = CARD_H + 16;             // card + feed gap
 const MAX_RESULTS = 30;
-const MODE_SEG_W = 66;                  // width of each half of the Home/Gym toggle
 
 const AVATARS = [
   require("@/assets/avatars/avatar1.jpg"),
@@ -251,6 +251,7 @@ const RoutineCard = React.memo(function RoutineCard({
 
 export default function Workout() {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation() as any;
 
   const [userName, setUserName] = useState("");
   const [search, setSearch] = useState("");
@@ -321,28 +322,11 @@ export default function Workout() {
     });
   }, [workoutMode, activeFilter]);
 
-  const switchMode = useCallback((mode: "home" | "gym") => {
-    LayoutAnimation.configureNext(LayoutAnimation.create(220, "easeInEaseOut", "opacity"));
-    setWorkoutMode(mode);
-    setFocusedCard(0);
-  }, []);
-
   const switchFilter = useCallback((pill: string) => {
     LayoutAnimation.configureNext(LayoutAnimation.create(220, "easeInEaseOut", "opacity"));
     setActiveFilter(pill);
     setFocusedCard(0);
   }, []);
-
-  // Sliding thumb for the Home/Gym toggle
-  const toggleAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(toggleAnim, {
-      toValue: workoutMode === "gym" ? 1 : 0,
-      duration: 200,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [workoutMode]);
 
   // Exercise search over the cached pool
   const exerciseResults = useMemo(() => {
@@ -407,8 +391,6 @@ export default function Workout() {
     feedListYRef.current = e.nativeEvent.layout.y;
   }, []);
 
-  const firstLetter = userName ? userName[0].toUpperCase() : "";
-
   return (
     <View style={s.container}>
       <StatusBar barStyle="light-content" />
@@ -423,7 +405,7 @@ export default function Workout() {
 
       <ScrollView
         style={s.scroll}
-        contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 110 }}
+        contentContainerStyle={{ paddingTop: insets.top + 22, paddingBottom: insets.bottom + 110 }}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         onScroll={onMainScroll}
@@ -432,19 +414,52 @@ export default function Workout() {
         {/* ── Top bar — avatar · mode · analytics ── */}
         <FadeTranslate order={0} direction="y" translateYFrom={-16}>
           <View style={s.topBar}>
-            <View style={s.topAvatar}>
-              {firstLetter ? (
-                <Text style={s.topAvatarLetter}>{firstLetter}</Text>
-              ) : (
-                <Ionicons name="person" size={17} color="rgba(255,255,255,0.65)" />
-              )}
-            </View>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={s.topAvatar}
+              onPress={() => navigation.navigate("profile")}
+              accessibilityRole="button"
+              accessibilityLabel="Open profile"
+            >
+              <Image source={AVATARS[0]} style={s.topAvatarImg} />
+            </TouchableOpacity>
 
-            <View style={s.topCenter}>
-              <Ionicons name="location-outline" size={13} color="rgba(255,255,255,0.90)" />
-              <Text style={s.topCenterText}>
-                Training at {workoutMode === "gym" ? "the Gym" : "Home"}
-              </Text>
+            <View style={s.searchBar}>
+              {isCaching ? (
+                <ActivityIndicator size="small" color={D.primary} />
+              ) : (
+                <Ionicons name="search" size={18} color="#A0A0A4" />
+              )}
+              <View style={s.searchInputWrap}>
+                <TextInput
+                  style={s.searchInput}
+                  placeholder={isCaching ? "" : "Search workouts & exercises"}
+                  placeholderTextColor="#A0A0A4"
+                  value={search}
+                  onChangeText={handleSearchChange}
+                  returnKeyType="search"
+                  autoCorrect={false}
+                  selectionColor={D.primary}
+                />
+                {isCaching && search.length === 0 && (
+                  <Animated.Text
+                    pointerEvents="none"
+                    style={[s.cachingPlaceholder, { opacity: pulseAnim }]}
+                    numberOfLines={1}
+                  >
+                    Caching exercises...
+                  </Animated.Text>
+                )}
+              </View>
+              {search.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => handleSearchChange("")}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close-circle" size={16} color="rgba(255,255,255,0.4)" />
+                </TouchableOpacity>
+              )}
             </View>
 
             <TouchableOpacity
@@ -452,7 +467,7 @@ export default function Workout() {
               style={s.topMenuBtn}
               onPress={() => router.push("/Analytics")}
             >
-              <Ionicons name="menu" size={17} color="#fff" />
+              <Ionicons name="menu" size={19} color="#fff" />
             </TouchableOpacity>
           </View>
         </FadeTranslate>
@@ -462,47 +477,6 @@ export default function Workout() {
           <View style={s.helloWrap}>
             <Text style={s.hello}>Hello, {userName || "Athlete"}</Text>
             <Text style={s.helloSub}>Let&apos;s explore your workout world!</Text>
-          </View>
-        </FadeTranslate>
-
-        {/* ── Search ── */}
-        <FadeTranslate order={0} delay={100} direction="y" translateYFrom={12}>
-          <View style={s.searchBar}>
-            {isCaching ? (
-              <ActivityIndicator size="small" color={D.primary} />
-            ) : (
-              <Ionicons name="search" size={16} color="rgba(255,255,255,0.45)" />
-            )}
-            <View style={s.searchInputWrap}>
-              <TextInput
-                style={s.searchInput}
-                placeholder={isCaching ? "" : "Search Workouts & Exercises"}
-                placeholderTextColor="rgba(255,255,255,0.45)"
-                value={search}
-                onChangeText={handleSearchChange}
-                returnKeyType="search"
-                autoCorrect={false}
-                selectionColor={D.primary}
-              />
-              {isCaching && search.length === 0 && (
-                <Animated.Text
-                  pointerEvents="none"
-                  style={[s.cachingPlaceholder, { opacity: pulseAnim }]}
-                  numberOfLines={1}
-                >
-                  Caching exercises, please wait...
-                </Animated.Text>
-              )}
-            </View>
-            {search.length > 0 && (
-              <TouchableOpacity
-                onPress={() => handleSearchChange("")}
-                activeOpacity={0.7}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close-circle" size={17} color="rgba(255,255,255,0.4)" />
-              </TouchableOpacity>
-            )}
           </View>
         </FadeTranslate>
 
@@ -617,50 +591,7 @@ export default function Workout() {
               <View style={s.sectionRow}>
                 <Text style={s.sectionTitle}>Workout Routines</Text>
 
-                {/* Home / Gym sliding toggle */}
-                <View style={s.modeToggle}>
-                  <Animated.View
-                    style={[
-                      s.modeThumb,
-                      {
-                        transform: [{
-                          translateX: toggleAnim.interpolate({
-                            inputRange: [0, 1],
-                            outputRange: [0, MODE_SEG_W],
-                          }),
-                        }],
-                      },
-                    ]}
-                  />
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPress={() => switchMode("home")}
-                    style={s.modeSeg}
-                  >
-                    <Ionicons
-                      name="home"
-                      size={12}
-                      color={workoutMode === "home" ? "#000" : "rgba(255,255,255,0.45)"}
-                    />
-                    <Text style={[s.modeSegText, workoutMode === "home" && s.modeSegTextActive]}>
-                      Home
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    activeOpacity={0.9}
-                    onPress={() => switchMode("gym")}
-                    style={s.modeSeg}
-                  >
-                    <Ionicons
-                      name="barbell"
-                      size={12}
-                      color={workoutMode === "gym" ? "#000" : "rgba(255,255,255,0.45)"}
-                    />
-                    <Text style={[s.modeSegText, workoutMode === "gym" && s.modeSegTextActive]}>
-                      Gym
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                <Text style={s.createText}>Create</Text>
               </View>
             </FadeTranslate>
 
@@ -695,49 +626,44 @@ const s = StyleSheet.create({
   // Top bar
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, marginBottom: 16,
+    paddingHorizontal: H_PAD, marginBottom: 18, gap: 12,
   },
   topAvatar: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: "#161618",
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: "#161618", overflow: "hidden",
     alignItems: "center", justifyContent: "center",
   },
-  topAvatarLetter: { color: "#fff", fontFamily: theme.semibold, fontSize: 15 },
-  topCenter: {
-    flexDirection: "row", alignItems: "center", gap: 5,
-  },
-  topCenterText: {
-    color: "rgba(255,255,255,0.90)", fontFamily: theme.medium, fontSize: 12.5,
-  },
+  topAvatarImg: { width: "100%", height: "100%" },
   topMenuBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: "#161618",
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: "#17191B",
     alignItems: "center", justifyContent: "center",
   },
 
   // Hello header
-  helloWrap: { paddingHorizontal: H_PAD, marginBottom: 16 },
+  helloWrap: { paddingHorizontal: H_PAD, marginBottom: 18 },
   hello: {
-    color: D.text, fontFamily: theme.semibold, fontSize: 28, letterSpacing: -0.3,
+    color: D.text, fontFamily: theme.semibold, fontSize: 30, lineHeight: 35, letterSpacing: -0.6,
   },
   helloSub: {
-    color: "#8E8E93", fontFamily: theme.regular, fontSize: 13, marginTop: 4,
+    color: "#8E8E93", fontFamily: theme.regular, fontSize: 13, lineHeight: 17, marginTop: 2,
   },
 
   // Search
   searchBar: {
+    flex: 1, minWidth: 0,
     flexDirection: "row", alignItems: "center", gap: 10,
-    marginHorizontal: H_PAD, marginBottom: 16,
-    backgroundColor: "#161618",
-    borderRadius: 999, paddingHorizontal: 16, height: 44,
+    backgroundColor: "#17191B",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.06)",
+    borderRadius: 22, paddingHorizontal: 15, height: 44,
   },
   searchInputWrap: { flex: 1, justifyContent: "center" },
   searchInput: {
-    color: D.text, fontFamily: theme.medium, fontSize: 13.5, paddingVertical: 0,
+    color: D.text, fontFamily: theme.medium, fontSize: 13, paddingVertical: 0,
   },
   cachingPlaceholder: {
     position: "absolute", left: 0, right: 0,
-    color: D.primary, fontFamily: theme.medium, fontSize: 13.5,
+    color: D.primary, fontFamily: theme.medium, fontSize: 12,
   },
 
   // Search results
@@ -777,46 +703,25 @@ const s = StyleSheet.create({
   emptyText: { color: D.sub, fontFamily: theme.medium, fontSize: 14, textAlign: "center" },
 
   // Filter pills
-  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 24, gap: 8 },
+  pillScroll: { paddingHorizontal: H_PAD, paddingBottom: 20, gap: 10 },
   pill: {
-    backgroundColor: "#161618",
-    height: 36, justifyContent: "center",
-    paddingHorizontal: 18, borderRadius: 999,
+    backgroundColor: "#17191B",
+    height: 46, justifyContent: "center",
+    paddingHorizontal: 22, borderRadius: 23,
   },
   pillActive: { backgroundColor: D.primary },
-  pillText: { color: "rgba(255,255,255,0.70)", fontFamily: theme.medium, fontSize: 13 },
+  pillText: { color: "#C8C8C8", fontFamily: theme.medium, fontSize: 14 },
   pillTextActive: { color: "#000", fontFamily: theme.semibold },
 
   // Section header
   sectionRow: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, marginBottom: 16,
+    paddingHorizontal: H_PAD, marginBottom: 14,
   },
   sectionTitle: {
-    color: D.text, fontFamily: theme.semibold, fontSize: 20, letterSpacing: -0.3,
+    color: D.text, fontFamily: theme.semibold, fontSize: 22, letterSpacing: -0.4,
   },
-
-  // Home / Gym sliding toggle
-  modeToggle: {
-    flexDirection: "row",
-    backgroundColor: "#161618",
-    borderRadius: 999, padding: 3,
-  },
-  modeThumb: {
-    position: "absolute",
-    top: 3, left: 3,
-    width: MODE_SEG_W, height: 28,
-    borderRadius: 999,
-    backgroundColor: D.primary,
-  },
-  modeSeg: {
-    width: MODE_SEG_W, height: 28,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4,
-  },
-  modeSegText: {
-    color: "rgba(255,255,255,0.45)", fontFamily: theme.semibold, fontSize: 11.5,
-  },
-  modeSegTextActive: { color: "#000" },
+  createText: { color: D.primary, fontFamily: theme.semibold, fontSize: 14 },
 
   // Routine cards
   feedList: { paddingHorizontal: H_PAD, gap: 16 },

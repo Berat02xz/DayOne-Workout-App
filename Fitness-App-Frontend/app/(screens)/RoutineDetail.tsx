@@ -1,183 +1,185 @@
-import React, { useRef, useEffect } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
   Animated,
-  TouchableOpacity,
-  Dimensions,
   Image,
+  Platform,
+  Pressable,
+  Share,
   StatusBar,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
 } from "react-native";
-import { useLocalSearchParams, router } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import { BlurTargetView, BlurView } from "expo-blur";
+import { LinearGradient } from "expo-linear-gradient";
+import { router, useLocalSearchParams } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { ROUTINES, type RoutineExercise } from "@/constants/workoutRoutines";
+import { SquircleSurface } from "@/components/ui/Squircle";
 import { theme } from "@/constants/theme";
-import { ROUTINES, RoutineExercise } from "@/constants/workoutRoutines";
 
-const { width: W, height: H } = Dimensions.get("window");
+const H_PAD = 18;
+const CARD_MARGIN = 16;
+const SHEET_OVERLAP = 54;
+const SUMMARY_H = 158;
+const SUMMARY_OVERHANG = 86;          // how far the card rises above the sheet
+const SUMMARY_RADIUS = 34;
+const CTA_HEIGHT = 58;
 
-// Hero takes ~78% of screen — matches the composition in the mockup
-const HERO_H = Math.round(H * 0.78);
-const ROUND_SIZE = 3;
-const CONTENT_PAD_H = 20;
-const DIVIDER_H = 48;      // height of the "˅" at the top of the content area
-const ROUNDS_PAD_TOP = 16; // gap between divider and first "Round" label
-const ROUND_HEADER_H = 42;
-const ROUND_BOTTOM_GAP = 22;
-const EX_ROW_H = 78;
-const EX_ROW_GAP = 10;
-const FADE_RANGE = 90;
+const TRAINER_AVATARS = [
+  require("@/assets/avatars/avatar1.jpg"),
+  require("@/assets/avatars/avatar2.jpg"),
+  require("@/assets/avatars/avatar3.jpg"),
+  require("@/assets/avatars/avatar4.jpg"),
+  require("@/assets/avatars/avatar5.jpg"),
+  require("@/assets/avatars/avatar6.jpg"),
+  require("@/assets/avatars/avatar7.jpg"),
+];
 
 const C = {
-  bg: "#0A0A0A",
-  primary: "#AAFB05",
+  background: "#000000",
+  sheet: "#000000",
+  card: "#161719",
+  surface: "#141517",
   text: "#FFFFFF",
-  sub: "rgba(255,255,255,0.42)",
-  card: "#1C1C1E",
+  muted: "#A3A5A8",
+  faint: "#76797C",
+  border: "rgba(255,255,255,0.07)",
+  primary: theme.primary,
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtTime(s?: number): string {
-  if (!s) return "";
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")} min`;
+function compactCount(value = 0) {
+  if (value < 1000) return value.toString();
+  const count = value >= 10000 ? Math.round(value / 1000) : (value / 1000).toFixed(1);
+  return `${count}k`;
 }
 
-function chunk<T>(arr: T[], n: number): T[][] {
-  return Array.from({ length: Math.ceil(arr.length / n) }, (_, i) =>
-    arr.slice(i * n, (i + 1) * n)
+function getTrainerAvatar(routineId: string) {
+  const index = [...routineId].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return TRAINER_AVATARS[index % TRAINER_AVATARS.length];
+}
+
+function StatPill({
+  icon,
+  label,
+}: {
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  label: string;
+}) {
+  return (
+    <View style={s.statPill}>
+      <Ionicons name={icon} size={14} color="#D9D9D9" />
+      <Text style={s.statPillText}>{label}</Text>
+    </View>
   );
 }
 
-// Compute absolute Y positions of round headers and exercise rows in scroll content
-function buildLayout(rounds: RoutineExercise[][]) {
-  const roundY: number[] = [];
-  const exY: number[] = [];
-  // Content starts after hero + topDivider + roundsPadTop
-  let y = HERO_H + DIVIDER_H + ROUNDS_PAD_TOP;
-  for (const round of rounds) {
-    roundY.push(y);
-    y += ROUND_HEADER_H;
-    for (let e = 0; e < round.length; e++) {
-      exY.push(y);
-      y += EX_ROW_H + (e < round.length - 1 ? EX_ROW_GAP : 0);
-    }
-    y += ROUND_BOTTOM_GAP;
-  }
-  return { roundY, exY };
-}
+function ExerciseRow({
+  exercise,
+  index,
+  onPress,
+}: {
+  exercise: RoutineExercise;
+  index: number;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${exercise.name}`}
+      style={({ pressed }) => [s.exerciseRow, pressed && s.exerciseRowPressed]}
+    >
+      <View style={s.exerciseThumb}>
+        {exercise.gifUrl ? (
+          <Image source={{ uri: exercise.gifUrl }} style={s.exerciseImage} resizeMode="cover" />
+        ) : (
+          <Ionicons name="barbell-outline" size={20} color={C.faint} />
+        )}
+      </View>
 
-// Items within the initial viewport (posY <= H - half of fade range) are always visible.
-// Items below the fold fade + slide in as the user scrolls to them.
-function fadeIn(sv: Animated.Value, posY: number): Animated.AnimatedInterpolation<number> {
-  if (posY <= H - FADE_RANGE / 2) {
-    return sv.interpolate({ inputRange: [0, 1], outputRange: [1, 1], extrapolate: "clamp" });
-  }
-  const start = posY - H;
-  const end = Math.max(start + 1, posY - H + FADE_RANGE);
-  return sv.interpolate({ inputRange: [start, end], outputRange: [0, 1], extrapolate: "clamp" });
-}
+      <View style={s.exerciseCopy}>
+        <Text style={s.exerciseName} numberOfLines={1}>{exercise.name}</Text>
+        <Text style={s.exerciseMeta} numberOfLines={1}>
+          {exercise.sets} sets · {exercise.reps} · {exercise.restSeconds}s rest
+        </Text>
+      </View>
 
-function slideIn(sv: Animated.Value, posY: number, from = 18): Animated.AnimatedInterpolation<number> {
-  if (posY <= H - FADE_RANGE / 2) {
-    return sv.interpolate({ inputRange: [0, 1], outputRange: [0, 0], extrapolate: "clamp" });
-  }
-  const start = posY - H;
-  const end = Math.max(start + 1, posY - H + FADE_RANGE);
-  return sv.interpolate({ inputRange: [start, end], outputRange: [from, 0], extrapolate: "clamp" });
+      <Text style={s.exerciseIndex}>{String(index + 1).padStart(2, "0")}</Text>
+    </Pressable>
+  );
 }
-
-// ─── Screen ───────────────────────────────────────────────────────────────────
 
 export default function RoutineDetail() {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
   const { routineId } = useLocalSearchParams<{ routineId: string }>();
   const scrollY = useRef(new Animated.Value(0)).current;
+  const heroBlurTarget = useRef<View | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  // Mount animations for hero overlay content
-  const titleO  = useRef(new Animated.Value(0)).current;
-  const titleY  = useRef(new Animated.Value(26)).current;
-  const statsO  = useRef(new Animated.Value(0)).current;
-  const statsY  = useRef(new Animated.Value(18)).current;
-  const btnS    = useRef(new Animated.Value(0.88)).current;
-  const btnO    = useRef(new Animated.Value(0)).current;
-  const hintO   = useRef(new Animated.Value(0)).current;
+  const routine = ROUTINES.find((item) => item.id === routineId);
+  const heroHeight = Math.min(438, Math.max(370, height * 0.52));
+  const summaryWidth = width - CARD_MARGIN * 2;
 
-  useEffect(() => {
-    Animated.sequence([
-      Animated.delay(80),
-      Animated.parallel([
-        Animated.timing(titleO, { toValue: 1, duration: 480, useNativeDriver: true }),
-        Animated.timing(titleY, { toValue: 0, duration: 480, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(statsO, { toValue: 1, duration: 320, useNativeDriver: true }),
-        Animated.timing(statsY, { toValue: 0, duration: 320, useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.spring(btnS, { toValue: 1, friction: 7, tension: 130, useNativeDriver: true }),
-        Animated.timing(btnO, { toValue: 1, duration: 200, useNativeDriver: true }),
-      ]),
-      Animated.timing(hintO, { toValue: 1, duration: 380, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  const routine = ROUTINES.find((r) => r.id === routineId);
+  const totalCalories = useMemo(
+    () =>
+      Math.round(
+        routine?.exercises.reduce(
+          (sum, exercise) => sum + (exercise.expectedCalories ?? 0) * exercise.sets,
+          0
+        ) ?? 0
+      ),
+    [routine]
+  );
 
   if (!routine) {
     return (
-      <View style={[s.root, { alignItems: "center", justifyContent: "center" }]}>
-        <Text style={{ color: C.text, fontFamily: theme.medium }}>Routine not found</Text>
-        <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 20 }}>
-          <Text style={{ color: C.primary, fontFamily: theme.bold }}>Go Back</Text>
-        </TouchableOpacity>
+      <View style={s.missing}>
+        <Text style={s.missingTitle}>Routine not found</Text>
+        <Pressable onPress={() => router.back()} style={s.missingButton}>
+          <Text style={s.missingButtonText}>Go back</Text>
+        </Pressable>
       </View>
     );
   }
 
-  const rounds = chunk(routine.exercises, ROUND_SIZE);
-  const { roundY, exY } = buildLayout(rounds);
+  const showToggle = routine.description.length > 90;
 
-  const totalKcal = Math.round(
-    routine.exercises.reduce((sum, ex) => sum + (ex.expectedCalories || 0) * ex.sets, 0)
-  );
-
-  // The scroll-hint chevrons start pointing UP (˄˄ = pull up for details)
-  // and rotate to DOWN (˅˅) once the user has scrolled into the content.
-  const chevronRotate = scrollY.interpolate({
-    inputRange: [0, H * 0.28],
-    outputRange: ["0deg", "180deg"],
+  const heroTranslate = scrollY.interpolate({
+    inputRange: [-heroHeight, 0, heroHeight],
+    outputRange: [-heroHeight * 0.18, 0, heroHeight * 0.26],
     extrapolate: "clamp",
   });
-
-  // "Details" label fades away as the user scrolls
-  const detailsTxtO = Animated.multiply(
-    hintO,
-    scrollY.interpolate({
-      inputRange: [0, H * 0.14],
-      outputRange: [1, 0],
-      extrapolate: "clamp",
-    })
-  );
+  const heroScale = scrollY.interpolate({
+    inputRange: [-heroHeight, 0],
+    outputRange: [1.8, 1],
+    extrapolate: "clamp",
+  });
 
   const handleStart = () =>
     router.replace({ pathname: "/WorkoutPlayer", params: { routineId: routine.id } });
 
-  const handleExercise = (ex: RoutineExercise) =>
+  const handleShare = () =>
+    Share.share({
+      message: `Try the ${routine.name} routine in Invicta: ${routine.description}`,
+    });
+
+  const handleExercise = (exercise: RoutineExercise) =>
     router.push({
       pathname: "/ExerciseDetail",
       params: {
-        exerciseId: ex.exerciseId,
-        name: ex.name,
-        sets: ex.sets?.toString(),
-        reps: ex.reps?.toString(),
-        restSeconds: ex.restSeconds?.toString(),
-        category: ex.category,
-        gifUrl: ex.gifUrl || "",
+        exerciseId: exercise.exerciseId,
+        name: exercise.name,
+        sets: exercise.sets.toString(),
+        reps: exercise.reps,
+        restSeconds: exercise.restSeconds.toString(),
+        category: exercise.category,
+        gifUrl: exercise.gifUrl ?? "",
       },
     });
 
@@ -186,358 +188,390 @@ export default function RoutineDetail() {
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
 
       <Animated.ScrollView
-        style={s.scroll}
-        contentContainerStyle={{ paddingBottom: insets.bottom + 52 }}
         showsVerticalScrollIndicator={false}
+        bounces
+        scrollEventThrottle={16}
+        contentContainerStyle={{ paddingBottom: insets.bottom + CTA_HEIGHT + 56 }}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
           { useNativeDriver: true }
         )}
-        scrollEventThrottle={16}
-        bounces
       >
-        {/* ── Hero ──────────────────────────────────────────────────── */}
-        <View style={[s.hero, { height: HERO_H }]}>
-          {/* Background: photo or gradient fallback */}
-          {routine.image ? (
-            <Image source={{ uri: routine.image }} style={s.heroBg} resizeMode="cover" />
-          ) : (
+        {/* ── Hero ── */}
+        <View style={[s.hero, { height: heroHeight }]}>
+          <BlurTargetView ref={heroBlurTarget} style={StyleSheet.absoluteFillObject}>
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFillObject,
+                { transform: [{ translateY: heroTranslate }, { scale: heroScale }] },
+              ]}
+            >
+              {routine.image ? (
+                <Image source={{ uri: routine.image }} style={s.heroImage} resizeMode="cover" />
+              ) : (
+                <LinearGradient colors={routine.gradient} style={StyleSheet.absoluteFillObject} />
+              )}
+            </Animated.View>
+
             <LinearGradient
-              colors={routine.gradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0.65, y: 1 }}
+              colors={["rgba(0,0,0,0.28)", "rgba(0,0,0,0)", "rgba(0,0,0,0.55)"]}
+              locations={[0, 0.55, 1]}
               style={StyleSheet.absoluteFillObject}
             />
-          )}
+          </BlurTargetView>
 
-          {/* Gradient overlay — darkens the bottom so text reads clearly */}
-          <LinearGradient
-            colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.52)", "rgba(8,8,8,0.98)"]}
-            locations={[0.38, 0.66, 1]}
-            style={StyleSheet.absoluteFillObject}
-          />
-
-          {/* Back button */}
-          <TouchableOpacity
-            style={[s.back, { top: insets.top + 14 }]}
-            onPress={() => router.back()}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="chevron-back" size={21} color="#FFF" />
-          </TouchableOpacity>
-
-          {/* Bottom content overlay */}
-          <View style={s.heroBot}>
-            {/* Title */}
-            <Animated.Text
-              style={[s.heroTitle, { opacity: titleO, transform: [{ translateY: titleY }] }]}
-              numberOfLines={2}
+          <View style={[s.heroHeader, { top: insets.top + 14 }]}>
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              style={({ pressed }) => [s.headerButtonHit, pressed && s.pressed]}
             >
-              {routine.name}
-            </Animated.Text>
-
-            {/* Stat chips: ⚡ Kcal  ⏱ Duration */}
-            <Animated.View
-              style={[s.statsRow, { opacity: statsO, transform: [{ translateY: statsY }] }]}
-            >
-              {totalKcal > 0 && (
-                <View style={s.chip}>
-                  <Ionicons name="flash" size={13} color={C.primary} />
-                  <Text style={s.chipTxt}>{totalKcal} Kcal</Text>
-                </View>
-              )}
-              <View style={s.chip}>
-                <Ionicons name="time-outline" size={13} color={C.primary} />
-                <Text style={s.chipTxt}>{routine.duration}</Text>
-              </View>
-            </Animated.View>
-
-            {/* Start Workout button — lime pill, dark circle play icon on right */}
-            <Animated.View style={{ opacity: btnO, transform: [{ scale: btnS }] }}>
-              <TouchableOpacity style={s.startBtn} onPress={handleStart} activeOpacity={0.84}>
-                <Text style={s.startLabel}>Start Workout</Text>
-                <View style={s.startCircle}>
-                  <Ionicons name="play" size={15} color={C.primary} />
-                </View>
-              </TouchableOpacity>
-            </Animated.View>
-
-            {/* Scroll indicator:
-                ˄˄ + "Details" at rest  →  ˅˅ (rotated 180°) + no text when scrolled */}
-            <Animated.View style={[s.detailHint, { opacity: hintO }]}>
-              <Animated.View
-                style={{ alignItems: "center", transform: [{ rotate: chevronRotate }] }}
+              <BlurView
+                blurTarget={heroBlurTarget}
+                blurMethod="dimezisBlurViewSdk31Plus"
+                intensity={38}
+                tint="systemUltraThinMaterialDark"
+                style={s.headerButton}
               >
-                <Ionicons
-                  name="chevron-up"
-                  size={14}
-                  color="rgba(255,255,255,0.42)"
-                  style={{ marginBottom: -6 }}
-                />
-                <Ionicons name="chevron-up" size={14} color="rgba(255,255,255,0.22)" />
-              </Animated.View>
-              <Animated.Text style={[s.detailHintTxt, { opacity: detailsTxtO }]}>
-                Details
-              </Animated.Text>
-            </Animated.View>
+                <Ionicons name="chevron-back" size={22} color={C.text} />
+              </BlurView>
+            </Pressable>
+
+            <Text style={s.headerTitle}>Details</Text>
+
+            <Pressable
+              onPress={handleShare}
+              accessibilityRole="button"
+              accessibilityLabel="Share routine"
+              style={({ pressed }) => [s.headerButtonHit, pressed && s.pressed]}
+            >
+              <BlurView
+                blurTarget={heroBlurTarget}
+                blurMethod="dimezisBlurViewSdk31Plus"
+                intensity={38}
+                tint="systemUltraThinMaterialDark"
+                style={s.headerButton}
+              >
+                <Ionicons name="share-outline" size={20} color={C.text} />
+              </BlurView>
+            </Pressable>
           </View>
         </View>
 
-        {/* ── Content ────────────────────────────────────────────────── */}
-        <View style={s.content}>
-          {/* Single ˅ divider — appears between hero and exercise list in the scrolled view */}
-          <View style={s.topDivider}>
-            <Ionicons name="chevron-down" size={18} color="rgba(255,255,255,0.18)" />
+        {/* ── Sheet ── */}
+        <View style={s.sheet}>
+          {/* Summary squircle card (overlaps the hero) */}
+          <View style={[s.summaryCard, { width: summaryWidth, height: SUMMARY_H }]}>
+            <SquircleSurface
+              width={summaryWidth}
+              height={SUMMARY_H}
+              cornerRadius={SUMMARY_RADIUS}
+              fill={C.card}
+              strokeColor="rgba(255,255,255,0.06)"
+            />
+            <View style={s.summaryThumb}>
+              {routine.image ? (
+                <Image source={{ uri: routine.image }} style={s.summaryImage} resizeMode="cover" />
+              ) : (
+                <LinearGradient colors={routine.gradient} style={StyleSheet.absoluteFillObject} />
+              )}
+            </View>
+
+            <View style={s.summaryCopy}>
+              <Text style={s.routineName} numberOfLines={2}>{routine.name}</Text>
+
+              <View style={s.metaRow}>
+                <Text style={s.difficulty}>{routine.difficulty}</Text>
+                {!!routine.completions && (
+                  <>
+                    <Ionicons name="star" size={12} color={C.primary} style={{ marginLeft: 9 }} />
+                    <Text style={s.completions}>{compactCount(routine.completions)}+ done</Text>
+                  </>
+                )}
+              </View>
+
+              <View style={s.trainerRow}>
+                <Image source={getTrainerAvatar(routine.id)} style={s.trainerAvatar} />
+                <View style={s.trainerCopy}>
+                  <Text style={s.trainerName} numberOfLines={1}>
+                    {routine.athlete?.name ?? "Invicta Training"}
+                  </Text>
+                  <Text style={s.trainerRole} numberOfLines={1}>
+                    {routine.athlete?.title ?? "Routine by Invicta athlete"}
+                  </Text>
+                </View>
+              </View>
+            </View>
           </View>
 
-          {/* Round sections */}
-          <View style={s.rounds}>
-            {rounds.map((round, rIdx) => (
-              <View key={rIdx} style={s.roundSection}>
-                {/* Round label */}
-                <Animated.Text
-                  style={[
-                    s.roundLabel,
-                    {
-                      opacity: fadeIn(scrollY, roundY[rIdx]),
-                      transform: [{ translateY: slideIn(scrollY, roundY[rIdx], 14) }],
-                    },
-                  ]}
-                >
-                  Round {rIdx + 1}
-                </Animated.Text>
+          {/* Description */}
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Description</Text>
+            <Text style={s.description} numberOfLines={expanded ? undefined : 3}>
+              {routine.description}
+            </Text>
+            {showToggle && (
+              <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={8}>
+                <Text style={s.showMore}>{expanded ? "Show less" : "Show more"}</Text>
+              </Pressable>
+            )}
 
-                {/* Exercise rows */}
-                {round.map((ex, eIdx) => {
-                  const gi = rIdx * ROUND_SIZE + eIdx;
-                  const dur = fmtTime(ex.durationSeconds);
-                  const meta = dur || (ex.reps ? `${ex.sets} × ${ex.reps}` : "");
+            <View style={s.statsRow}>
+              <StatPill icon="barbell-outline" label={`${routine.exercises.length} Exercises`} />
+              <StatPill icon="flame-outline" label={`${totalCalories} Kcal`} />
+              <StatPill icon="time-outline" label={routine.duration} />
+            </View>
+          </View>
 
-                  return (
-                    <Animated.View
-                      key={eIdx}
-                      style={[
-                        s.exCard,
-                        eIdx > 0 && { marginTop: EX_ROW_GAP },
-                        {
-                          opacity: fadeIn(scrollY, exY[gi]),
-                          transform: [{ translateY: slideIn(scrollY, exY[gi], 18) }],
-                        },
-                      ]}
-                    >
-                      <TouchableOpacity
-                        style={s.exInner}
-                        activeOpacity={0.72}
-                        onPress={() => handleExercise(ex)}
-                      >
-                        {/* GIF thumbnail */}
-                        <View style={s.exThumb}>
-                          {ex.gifUrl ? (
-                            <Image
-                              source={{ uri: ex.gifUrl }}
-                              style={s.exImg}
-                              resizeMode="cover"
-                            />
-                          ) : (
-                            <Ionicons name="barbell-outline" size={22} color="#555" />
-                          )}
-                        </View>
+          {/* Exercises */}
+          <View style={s.exerciseSection}>
+            <View style={s.exerciseHeader}>
+              <Text style={s.exerciseTitle}>Exercises</Text>
+              <Text style={s.exerciseCount}>{routine.exercises.length} total</Text>
+            </View>
 
-                        {/* Name + meta */}
-                        <View style={s.exInfo}>
-                          <Text style={s.exName} numberOfLines={1}>{ex.name}</Text>
-                          {meta ? <Text style={s.exMeta}>{meta}</Text> : null}
-                        </View>
-
-                        {/* Play circle */}
-                        <View style={s.exPlay}>
-                          <Ionicons name="play" size={12} color="rgba(255,255,255,0.72)" />
-                        </View>
-                      </TouchableOpacity>
-                    </Animated.View>
-                  );
-                })}
-              </View>
-            ))}
+            <View style={s.exerciseList}>
+              {routine.exercises.map((exercise, index) => (
+                <ExerciseRow
+                  key={`${exercise.exerciseId}-${index}`}
+                  exercise={exercise}
+                  index={index}
+                  onPress={() => handleExercise(exercise)}
+                />
+              ))}
+            </View>
           </View>
         </View>
       </Animated.ScrollView>
+
+      {/* ── Bottom action bar ── */}
+      <LinearGradient
+        colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.85)", C.sheet]}
+        locations={[0, 0.5, 1]}
+        style={s.ctaGradient}
+        pointerEvents="none"
+      />
+      <View style={[s.ctaWrap, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+        <Pressable
+          onPress={() => setSaved((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={saved ? "Remove from saved" : "Save routine"}
+          style={({ pressed }) => [s.saveButtonHit, pressed && s.pressed]}
+        >
+          <BlurView
+            experimentalBlurMethod={Platform.OS === "android" ? "dimezisBlurView" : undefined}
+            intensity={Platform.OS === "ios" ? 55 : 35}
+            tint="light"
+            style={s.saveButton}
+          >
+            <Ionicons
+              name={saved ? "bookmark" : "bookmark-outline"}
+              size={22}
+              color={saved ? C.primary : "#fff"}
+            />
+          </BlurView>
+        </Pressable>
+
+        <Pressable
+          onPress={handleStart}
+          accessibilityRole="button"
+          accessibilityLabel={`Start ${routine.name}`}
+          style={({ pressed }) => [s.startButton, pressed && s.startButtonPressed]}
+        >
+          <Text style={s.startButtonText}>Start Workout</Text>
+          <Ionicons name="play" size={13} color="#000000" />
+        </Pressable>
+      </View>
     </View>
   );
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────────
-
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.bg },
-  scroll: { flex: 1 },
-
-  // ── Hero ────────────────────────────────────────────────────────────────────
-  hero: { width: W, overflow: "hidden" },
-  heroBg: { ...StyleSheet.absoluteFillObject, width: W } as any,
-
-  back: {
-    position: "absolute",
-    left: 20,
-    zIndex: 10,
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(0,0,0,0.38)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+  root: { flex: 1, backgroundColor: C.background },
+  missing: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    padding: 24,
+    backgroundColor: C.background,
+  },
+  missingTitle: { color: C.text, fontFamily: theme.bold, fontSize: 20 },
+  missingButton: { marginTop: 18, padding: 12 },
+  missingButtonText: { color: C.primary, fontFamily: theme.bold, fontSize: 15 },
+  pressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
+
+  // Hero
+  hero: { overflow: "hidden", backgroundColor: C.background },
+  heroImage: { width: "100%", height: "100%" },
+  heroHeader: {
+    position: "absolute",
+    left: H_PAD,
+    right: H_PAD,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerButtonHit: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  headerButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.24)",
+    backgroundColor: "rgba(10,10,10,0.14)",
+  },
+  headerTitle: { color: C.text, fontFamily: theme.semibold, fontSize: 15 },
+
+  // Sheet
+  sheet: {
+    minHeight: 600,
+    marginTop: -SHEET_OVERLAP,
+    paddingTop: SUMMARY_H - SUMMARY_OVERHANG + 30,
+    paddingHorizontal: H_PAD,
+    borderTopLeftRadius: 42,
+    borderTopRightRadius: 42,
+    backgroundColor: C.sheet,
   },
 
-  heroBot: {
+  // Summary squircle card
+  summaryCard: {
     position: "absolute",
+    top: -SUMMARY_OVERHANG,
+    left: CARD_MARGIN,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 14,
+    paddingRight: 20,
+  },
+  summaryThumb: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    overflow: "hidden",
+    backgroundColor: C.surface,
+  },
+  summaryImage: { width: "100%", height: "100%" },
+  summaryCopy: { flex: 1, minWidth: 0, marginLeft: 16 },
+  routineName: {
+    color: C.text,
+    fontFamily: theme.bold,
+    fontSize: 21,
+    lineHeight: 24,
+    letterSpacing: -0.5,
+  },
+  metaRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
+  difficulty: { color: C.primary, fontFamily: theme.bold, fontSize: 13.5 },
+  completions: { color: C.muted, fontFamily: theme.medium, fontSize: 12, marginLeft: 4 },
+  trainerRow: { flexDirection: "row", alignItems: "center", marginTop: 14 },
+  trainerAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.surface },
+  trainerCopy: { flex: 1, minWidth: 0, marginLeft: 10 },
+  trainerName: { color: C.text, fontFamily: theme.semibold, fontSize: 12.5 },
+  trainerRole: { color: C.faint, fontFamily: theme.regular, fontSize: 10.5, marginTop: 1 },
+
+  // Description + stats
+  section: { paddingHorizontal: 4 },
+  sectionTitle: { color: C.text, fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.2 },
+  description: {
+    marginTop: 10,
+    color: C.muted,
+    fontFamily: theme.regular,
+    fontSize: 13.5,
+    lineHeight: 20,
+  },
+  showMore: { color: C.primary, fontFamily: theme.semibold, fontSize: 13, marginTop: 8 },
+  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 20 },
+  statPill: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+  },
+  statPillText: { color: "#E6E6E6", fontFamily: theme.medium, fontSize: 12 },
+
+  // Exercises
+  exerciseSection: { marginTop: 34 },
+  exerciseHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+    paddingHorizontal: 4,
+  },
+  exerciseTitle: { color: C.text, fontFamily: theme.bold, fontSize: 20, letterSpacing: -0.4 },
+  exerciseCount: { color: C.faint, fontFamily: theme.medium, fontSize: 12 },
+  exerciseList: { gap: 10 },
+  exerciseRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 10,
+    paddingRight: 16,
+    borderRadius: 20,
+    backgroundColor: C.surface,
+  },
+  exerciseRowPressed: { opacity: 0.7 },
+  exerciseThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0C0D0E",
+  },
+  exerciseImage: { width: "100%", height: "100%" },
+  exerciseCopy: { flex: 1, minWidth: 0, marginLeft: 13 },
+  exerciseName: { color: C.text, fontFamily: theme.semibold, fontSize: 14.5 },
+  exerciseMeta: { color: C.faint, fontFamily: theme.regular, fontSize: 11.5, marginTop: 5 },
+  exerciseIndex: { color: "rgba(255,255,255,0.22)", fontFamily: theme.bold, fontSize: 13 },
+
+  // Bottom action bar
+  ctaGradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: 130 },
+  ctaWrap: {
+    position: "absolute",
+    left: H_PAD,
+    right: H_PAD,
     bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: CONTENT_PAD_H + 4,
-    paddingBottom: 22,
-  },
-
-  heroTitle: {
-    fontFamily: theme.black,
-    fontSize: 36,
-    color: C.text,
-    letterSpacing: -1,
-    lineHeight: 42,
-    marginBottom: 12,
-  },
-
-  statsRow: {
+    paddingTop: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 18,
-    marginBottom: 18,
+    gap: 12,
   },
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  chipTxt: {
-    fontFamily: theme.semibold,
-    fontSize: 14,
-    color: C.text,
-  },
-
-  // Lime pill with dark play circle — mirrors the image exactly
-  startBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: C.primary,
-    borderRadius: 32,
-    height: 58,
-    paddingLeft: 26,
-    paddingRight: 8,
-  },
-  startLabel: {
-    flex: 1,
-    fontFamily: theme.bold,
-    fontSize: 17,
-    color: "#000",
-    letterSpacing: -0.2,
-  },
-  startCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(0,0,0,0.28)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  // Scroll indicator: ˄˄ Details → rotates to ˅˅ on scroll
-  detailHint: {
-    alignItems: "center",
-    marginTop: 14,
-  },
-  detailHintTxt: {
-    fontFamily: theme.medium,
-    fontSize: 12,
-    color: "rgba(255,255,255,0.36)",
-    marginTop: 5,
-    letterSpacing: 0.5,
-  },
-
-  // ── Content ─────────────────────────────────────────────────────────────────
-  content: { backgroundColor: C.bg },
-
-  // Single ˅ shown between hero and exercise list once scrolled (matches right phone in image)
-  topDivider: {
-    height: DIVIDER_H,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  rounds: {
-    paddingHorizontal: CONTENT_PAD_H,
-    paddingTop: ROUNDS_PAD_TOP,
-    paddingBottom: 24,
-  },
-  roundSection: {
-    marginBottom: ROUND_BOTTOM_GAP,
-  },
-  roundLabel: {
-    fontFamily: theme.semibold,
-    fontSize: 14,
-    color: "rgba(255,255,255,0.40)",
-    marginBottom: 10,
-    letterSpacing: 0.3,
-  },
-
-  // ── Exercise card ────────────────────────────────────────────────────────────
-  exCard: {
-    borderRadius: 18,
-    backgroundColor: C.card,
-    overflow: "hidden",
-  },
-  exInner: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 8,
-    minHeight: EX_ROW_H,
-  },
-  exThumb: {
+  saveButtonHit: { height: CTA_HEIGHT },
+  saveButton: {
     width: 62,
-    height: 62,
-    borderRadius: 12,
-    backgroundColor: "#111",
+    height: CTA_HEIGHT,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
     overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  exImg: { width: "100%" as any, height: "100%" as any },
-  exInfo: {
-    flex: 1,
-    marginLeft: 12,
-    justifyContent: "center",
-  },
-  exName: {
-    fontFamily: theme.bold,
-    fontSize: 15,
-    color: C.text,
-    marginBottom: 5,
-  },
-  exMeta: {
-    fontFamily: theme.medium,
-    fontSize: 13,
-    color: C.sub,
-  },
-  exPlay: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.10)",
+    borderColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "rgba(255,255,255,0.10)",
+  },
+  startButton: {
+    flex: 1,
+    height: CTA_HEIGHT,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 10,
-    marginRight: 4,
+    gap: 8,
+    borderRadius: 22,
+    backgroundColor: C.primary,
+  },
+  startButtonPressed: { opacity: 0.9, transform: [{ scale: 0.99 }] },
+  startButtonText: {
+    color: "#000000",
+    fontFamily: theme.black,
+    fontSize: 15,
+    letterSpacing: -0.25,
   },
 });

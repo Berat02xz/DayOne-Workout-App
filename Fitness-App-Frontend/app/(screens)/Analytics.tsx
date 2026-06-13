@@ -15,9 +15,9 @@ import { router, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import Svg, { Circle, Ellipse, Path } from "react-native-svg";
+import Svg, { Ellipse, Path } from "react-native-svg";
 import { theme } from "@/constants/theme";
-import database from "@/database/database";
+import workoutDatabase from "@/database/database";
 import { getUserIdFromToken } from "@/api/TokenDecoder";
 import { WorkoutLog } from "@/models/WorkoutLog";
 import { ROUTINES } from "@/constants/workoutRoutines";
@@ -38,7 +38,13 @@ const D = {
 
 const NUM: TextStyle = { fontVariant: ["tabular-nums"] };
 
-const ACircle: any = Animated.createAnimatedComponent(Circle);
+type RangeKey = "week" | "month" | "all";
+
+const RANGES: { key: RangeKey; label: string; shortLabel: string; days: number | null }[] = [
+  { key: "week", label: "This week", shortLabel: "Week", days: 7 },
+  { key: "month", label: "Last 4 weeks", shortLabel: "Month", days: 28 },
+  { key: "all", label: "All time", shortLabel: "All", days: null },
+];
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 const DAY_MS = 86_400_000;
@@ -96,13 +102,12 @@ const GRID_WEEKS = 12;
 
 interface DayActivity { minutes: number; count: number }
 
-interface Analytics {
+interface AnalyticsData {
   totalWorkouts: number;
   totalMinutes: number;
   totalKcal: number;
   streak: number;
   bestStreak: number;
-  weekDays: number;             // distinct trained days this week
   trainedDays: number;          // distinct days in grid window
   byDay: Map<string, DayActivity>;
   gridStart: Date;              // Monday, GRID_WEEKS ago
@@ -110,8 +115,6 @@ interface Analytics {
   cardioScore: number;
   mostTrained: Group | null;
   leastTrained: Group | null;
-  thisWeekMin: number;
-  lastWeekMin: number;
   bestSessionMin: number;
   bestSessionName: string;
   bestBurn: number;
@@ -119,7 +122,7 @@ interface Analytics {
   lastWorkoutAt: number | null;
 }
 
-function aggregate(logs: WorkoutLog[]): Analytics {
+function aggregate(logs: WorkoutLog[]): AnalyticsData {
   const byDay = new Map<string, DayActivity>();
   const dayTimes = new Set<number>();
   const muscleScores = Object.fromEntries(GROUPS.map((g) => [g, 0])) as Record<Group, number>;
@@ -188,19 +191,6 @@ function aggregate(logs: WorkoutLog[]): Analytics {
     if (byDay.has(dayKey(new Date(t)))) trainedDays++;
   }
 
-  // This week vs last week (minutes) + trained days this week
-  const thisMonday = mondayOf(new Date());
-  const lastMonday = new Date(thisMonday.getTime() - 7 * DAY_MS);
-  let thisWeekMin = 0;
-  let lastWeekMin = 0;
-  for (const log of logs) {
-    const min = Math.round((log.durationSeconds ?? 0) / 60);
-    if (log.completedAt >= thisMonday.getTime()) thisWeekMin += min;
-    else if (log.completedAt >= lastMonday.getTime()) lastWeekMin += min;
-  }
-  let weekDays = 0;
-  for (const t of dayTimes) if (t >= thisMonday.getTime()) weekDays++;
-
   // Most / least trained
   const trained = GROUPS.filter((g) => muscleScores[g] > 0);
   const mostTrained = trained.length
@@ -215,9 +205,8 @@ function aggregate(logs: WorkoutLog[]): Analytics {
   return {
     totalWorkouts: logs.length,
     totalMinutes, totalKcal: Math.round(totalKcal),
-    streak, bestStreak, weekDays, trainedDays, byDay, gridStart,
+    streak, bestStreak, trainedDays, byDay, gridStart,
     muscleScores, cardioScore, mostTrained, leastTrained,
-    thisWeekMin, lastWeekMin,
     bestSessionMin, bestSessionName, bestBurn: Math.round(bestBurn), bestWeekCount,
     lastWorkoutAt,
   };
@@ -248,7 +237,7 @@ function CountUp({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [value]);
+  }, [delay, duration, value]);
 
   return <Text style={style}>{format ? format(disp) : `${Math.round(disp)}`}</Text>;
 }
@@ -322,7 +311,7 @@ function ConsistencyGrid({
       toValue: 1, duration: 1500, delay: 250,
       easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start();
-  }, [animKey]);
+  }, [animKey, progress]);
 
   const weeks = Array.from({ length: GRID_WEEKS }, (_, w) =>
     new Date(gridStart.getTime() + w * 7 * DAY_MS)
@@ -389,7 +378,6 @@ const g = StyleSheet.create({
 const VB_W = 120;
 const VB_H = 252;
 const FIG_W = 124;
-const FIG_H = Math.round(FIG_W * (VB_H / VB_W));
 
 const BASE_FILL = "#1A1A1E";   // silhouette
 const REST_FILL = "#27272D";   // untrained muscle
@@ -567,17 +555,30 @@ function heatColor(score: number, max: number): string {
   return `rgba(170,251,5,${(0.16 + 0.84 * t).toFixed(2)})`;
 }
 
-function BodyFigure({ side, heat }: { side: "front" | "back"; heat: Record<Group, string> }) {
+function BodyFigure({
+  side, heat, width = FIG_W, selected,
+}: {
+  side: "front" | "back";
+  heat: Record<Group, string>;
+  width?: number;
+  selected?: Group | null;
+}) {
   const muscles = side === "front" ? FRONT_MUSCLES : BACK_MUSCLES;
   const details = side === "front" ? FRONT_DETAILS : BACK_DETAILS;
   return (
-    <Svg width={FIG_W} height={FIG_H} viewBox={`0 0 ${VB_W} ${VB_H}`}>
+    <Svg width={width} height={Math.round(width * (VB_H / VB_W))} viewBox={`0 0 ${VB_W} ${VB_H}`}>
       <Ellipse cx={60} cy={13.5} rx={9} ry={11} fill={BASE_FILL} />
       {BASE_PARTS.map((d, i) => (
         <Path key={`b${i}`} d={d} fill={BASE_FILL} />
       ))}
       {muscles.map((m, i) => (
-        <Path key={`m${i}`} d={m.d} fill={heat[m.group]} stroke={SEP} strokeWidth={1.1} />
+        <Path
+          key={`m${i}`}
+          d={m.d}
+          fill={heat[m.group]}
+          stroke={selected === m.group ? "#D7FF69" : SEP}
+          strokeWidth={selected === m.group ? 2.2 : 1.1}
+        />
       ))}
       {details.map((d, i) => (
         <Path key={`d${i}`} d={d} stroke={SEP} strokeWidth={1.4} fill="none" strokeLinecap="round" />
@@ -592,8 +593,10 @@ export default function Analytics() {
   const insets = useSafeAreaInsets();
   const [logs, setLogs] = useState<WorkoutLog[]>([]);
   const [showAllMuscles, setShowAllMuscles] = useState(false);
+  const [range, setRange] = useState<RangeKey>("week");
+  const [figureSide, setFigureSide] = useState<"front" | "back">("front");
+  const [selectedMuscle, setSelectedMuscle] = useState<Group | null>(null);
 
-  const ringAnim = useRef(new Animated.Value(0)).current;
   const barAnim = useRef(new Animated.Value(0)).current;
 
   useFocusEffect(
@@ -603,7 +606,7 @@ export default function Analytics() {
         try {
           const userId = await getUserIdFromToken();
           if (!userId) return;
-          const all = await database.get<WorkoutLog>("workout_logs").query().fetch();
+          const all = await workoutDatabase.get<WorkoutLog>("workout_logs").query().fetch();
           if (active) setLogs(all.filter((l) => l.userId === userId));
         } catch {}
       })();
@@ -611,21 +614,24 @@ export default function Analytics() {
     }, [])
   );
 
-  const a = useMemo(() => aggregate(logs), [logs]);
+  const rangeConfig = RANGES.find((item) => item.key === range) ?? RANGES[0];
+  const filteredLogs = useMemo(() => {
+    if (!rangeConfig.days) return logs;
+    const cutoff = startOfDay(new Date()).getTime() - (rangeConfig.days - 1) * DAY_MS;
+    return logs.filter((log) => log.completedAt >= cutoff);
+  }, [logs, rangeConfig.days]);
 
-  // ring + bars animate when data lands
+  const allTime = useMemo(() => aggregate(logs), [logs]);
+  const a = useMemo(() => aggregate(filteredLogs), [filteredLogs]);
+
+  // Bars animate when the selected range changes.
   useEffect(() => {
-    ringAnim.setValue(0);
-    Animated.timing(ringAnim, {
-      toValue: 1, duration: 1200, delay: 250,
-      easing: Easing.out(Easing.cubic), useNativeDriver: false,
-    }).start();
     barAnim.setValue(0);
     Animated.timing(barAnim, {
       toValue: 1, duration: 950, delay: 400,
       easing: Easing.out(Easing.cubic), useNativeDriver: false,
     }).start();
-  }, [logs.length]);
+  }, [barAnim, filteredLogs.length, range]);
 
   const maxScore = Math.max(...GROUPS.map((gr) => a.muscleScores[gr]), 0.001);
   const heat = Object.fromEntries(
@@ -645,31 +651,20 @@ export default function Analytics() {
   }, [a]);
 
   const visibleSplit = showAllMuscles ? split : split.slice(0, 5);
+  const topMuscles = useMemo(
+    () => split.filter((item) => GROUPS.includes(item.name as Group)).slice(0, 4),
+    [split]
+  );
+  const focusedMuscle = selectedMuscle ?? a.mostTrained;
+  const focusedSplit = split.find((item) => item.name === focusedMuscle);
 
-  // Balance: least / most trained ratio across trained groups
+  const averageMinutes = a.totalWorkouts > 0 ? Math.round(a.totalMinutes / a.totalWorkouts) : 0;
+
+  // Balance includes untouched groups so neglected areas are not hidden.
   const balance = useMemo(() => {
-    const scores = GROUPS.map((gr) => a.muscleScores[gr]).filter((v) => v > 0);
-    if (scores.length < 2) return null;
+    const scores = GROUPS.map((gr) => a.muscleScores[gr]);
+    if (Math.max(...scores) <= 0) return null;
     return Math.round((Math.min(...scores) / Math.max(...scores)) * 100);
-  }, [a]);
-
-  // Weekly delta
-  const delta =
-    a.lastWeekMin > 0
-      ? Math.round(((a.thisWeekMin - a.lastWeekMin) / a.lastWeekMin) * 100)
-      : null;
-
-  // This week's Mon–Sun day markers
-  const weekDots = useMemo(() => {
-    const mon = mondayOf(new Date());
-    const now = Date.now();
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(mon.getTime() + i * DAY_MS);
-      return {
-        trained: a.byDay.has(dayKey(d)),
-        future: d.getTime() > now,
-      };
-    });
   }, [a]);
 
   // One contextual insight, picked by priority
@@ -687,22 +682,16 @@ export default function Analytics() {
     return "Every session counts. Keep showing up.";
   }, [a]);
 
-  // Streak ring geometry
-  const RING_R = 28;
-  const RING_C = 2 * Math.PI * RING_R;
-  const weekFrac = Math.min(1, a.weekDays / 7);
-  const dashOffset = ringAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [RING_C, RING_C * (1 - weekFrac)],
-  });
-
   return (
     <View style={s.container}>
       <StatusBar barStyle="light-content" />
 
       {/* ── Header ── */}
       <View style={[s.header, { paddingTop: insets.top + 10 }]}>
-        <Text style={s.headerTitle}>Analytics</Text>
+        <View>
+          <Text style={s.headerTitle}>Performance</Text>
+          <Text style={s.headerSub}>Your training story</Text>
+        </View>
         <TouchableOpacity style={s.closeBtn} activeOpacity={0.8} onPress={() => router.back()}>
           <Ionicons name="close" size={21} color="#fff" />
         </TouchableOpacity>
@@ -712,121 +701,180 @@ export default function Analytics() {
         contentContainerStyle={{ paddingBottom: insets.bottom + 60 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* ── Row 1: streak ring + workouts ── */}
+        {/* ── Range control ── */}
         <FadeTranslate order={0} direction="y" translateYFrom={16}>
-          <View style={s.row1}>
-            <View style={s.bigCard}>
-              <Text style={s.eyebrow}>STREAK</Text>
-              <View style={s.ringWrap}>
-                <Svg width={68} height={68}>
-                  <Circle
-                    cx={34} cy={34} r={RING_R}
-                    stroke="rgba(255,255,255,0.08)" strokeWidth={4.5} fill="none"
-                  />
-                  <ACircle
-                    cx={34} cy={34} r={RING_R}
-                    stroke={D.primary} strokeWidth={4.5} fill="none"
-                    strokeLinecap="round"
-                    strokeDasharray={`${RING_C}`}
-                    strokeDashoffset={dashOffset}
-                    rotation={-90} origin="34,34"
-                  />
-                </Svg>
-                <View style={s.ringCenter}>
-                  <CountUp value={a.streak} style={s.ringNumber} />
-                </View>
+          <View style={s.rangeControl}>
+            {RANGES.map((item) => {
+              const active = item.key === range;
+              return (
+                <TouchableOpacity
+                  key={item.key}
+                  activeOpacity={0.85}
+                  onPress={() => setRange(item.key)}
+                  style={[s.rangeButton, active && s.rangeButtonActive]}
+                >
+                  <Text style={[s.rangeButtonText, active && s.rangeButtonTextActive]}>
+                    {item.shortLabel}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </FadeTranslate>
+
+        {/* ── Primary metric ── */}
+        <FadeTranslate order={0} delay={30} direction="y" translateYFrom={18}>
+          <View style={s.hero}>
+            <View style={s.heroLabelRow}>
+              <View style={s.heroIcon}>
+                <Ionicons name="pulse" size={14} color="#000" />
               </View>
-              <View>
-                <Text style={s.bigCardLabel}>Day streak</Text>
-                <Text style={s.bigCardSub}>
-                  {a.bestStreak > 0 ? `Best · ${a.bestStreak}d` : "Start one today"}
-                </Text>
+              <Text style={s.heroLabel}>ACTIVE TRAINING · {rangeConfig.label.toUpperCase()}</Text>
+            </View>
+            <View style={s.heroValueRow}>
+              <CountUp value={a.totalMinutes} style={s.heroValue} />
+              <Text style={s.heroGoal}>minutes</Text>
+            </View>
+            <View style={s.heroMetaRow}>
+              <View style={s.heroMetaPill}>
+                <Ionicons name="barbell-outline" size={13} color={D.primary} />
+                <Text style={s.heroMetaValue}>{a.totalWorkouts}</Text>
+                <Text style={s.heroMetaLabel}>sessions</Text>
+              </View>
+              <View style={s.heroMetaPill}>
+                <Ionicons name="flame-outline" size={13} color="#FF795C" />
+                <Text style={[s.heroMetaValue, { color: "#FF795C" }]}>{fmtThousand(a.totalKcal)}</Text>
+                <Text style={s.heroMetaLabel}>kcal</Text>
+              </View>
+              <View style={s.livePill}>
+                <View style={s.liveDot} />
+                <Text style={s.liveText}>{a.lastWorkoutAt ? agoStr(a.lastWorkoutAt) : "No sessions"}</Text>
               </View>
             </View>
+          </View>
+        </FadeTranslate>
 
-            <View style={s.bigCard}>
-              <Text style={s.eyebrow}>WORKOUTS</Text>
-              <CountUp value={a.totalWorkouts} style={s.bigNumber} />
-              <View>
-                <Text style={s.bigCardLabel}>All time</Text>
-                <Text style={s.bigCardSub}>
-                  {a.lastWorkoutAt ? `Last · ${agoStr(a.lastWorkoutAt)}` : "None yet"}
-                </Text>
+        {/* ── Editorial signal deck ── */}
+        <FadeTranslate order={0} delay={70} direction="y" translateYFrom={14}>
+          <View style={s.signalDeck}>
+            <LinearGradient
+              colors={["#D4FF62", "#9FE900"]}
+              start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={s.streakFeature}
+            >
+              <View style={s.featureTop}>
+                <View style={s.featureIcon}>
+                  <Ionicons name="flame" size={17} color="#000" />
+                </View>
+                <Text style={s.featureIndex}>01</Text>
               </View>
+              <View>
+                <Text style={s.featureValue}>{allTime.streak}</Text>
+                <Text style={s.featureTitle}>day streak</Text>
+                <Text style={s.featureSub}>Personal best · {allTime.bestStreak} days</Text>
+              </View>
+            </LinearGradient>
+            <View style={s.signalStack}>
+              <LinearGradient colors={["#232329", "#151518"]} style={s.signalCard}>
+                <View style={s.signalCardTop}>
+                  <Text style={s.eyebrow}>AVG SESSION</Text>
+                  <Ionicons name="timer-outline" size={15} color="#8ABEFF" />
+                </View>
+                <Text style={s.signalValue}>{averageMinutes}<Text style={s.signalUnit}> min</Text></Text>
+              </LinearGradient>
+              <LinearGradient colors={["#211D20", "#151518"]} style={s.signalCard}>
+                <View style={s.signalCardTop}>
+                  <Text style={s.eyebrow}>MUSCLE BALANCE</Text>
+                  <Ionicons name="analytics-outline" size={15} color="#FF9A77" />
+                </View>
+                <Text style={s.signalValue}>{balance !== null ? balance : "—"}<Text style={s.signalUnit}>%</Text></Text>
+              </LinearGradient>
             </View>
           </View>
         </FadeTranslate>
 
         {/* ── Consistency dots ── */}
         <FadeTranslate order={0} delay={90} direction="y" translateYFrom={16}>
-          <View style={s.card}>
+          <LinearGradient colors={["#161619", "#101012"]} style={s.card}>
             <View style={s.cardHeaderRow}>
-              <Text style={s.eyebrow}>CONSISTENCY</Text>
+              <View>
+                <Text style={s.eyebrow}>CONSISTENCY</Text>
+                <Text style={s.cardTitle}>Last 12 weeks</Text>
+              </View>
               <Text style={s.cardHeaderValue}>
-                {a.trainedDays}<Text style={s.cardHeaderDim}> / {GRID_WEEKS * 7} days</Text>
+                {allTime.trainedDays}<Text style={s.cardHeaderDim}> / {GRID_WEEKS * 7} days</Text>
               </Text>
             </View>
             <View style={{ marginTop: 18 }}>
-              <ConsistencyGrid byDay={a.byDay} gridStart={a.gridStart} animKey={logs.length} />
+              <ConsistencyGrid byDay={allTime.byDay} gridStart={allTime.gridStart} animKey={logs.length} />
             </View>
-          </View>
+          </LinearGradient>
         </FadeTranslate>
 
-        {/* ── This week strip ── */}
-        <FadeTranslate order={0} delay={160} direction="y" translateYFrom={14}>
-          <View style={s.strip}>
-            <View style={{ flex: 1, gap: 8 }}>
-              <Text style={s.eyebrow}>THIS WEEK</Text>
-              <View style={s.weekDotsRow}>
-                {weekDots.map((d, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      s.weekDot,
-                      d.trained
-                        ? { backgroundColor: D.primary }
-                        : { backgroundColor: d.future ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.14)" },
-                    ]}
-                  />
-                ))}
-              </View>
-              {delta !== null && (
-                <View style={s.deltaRow}>
-                  <Ionicons
-                    name={delta >= 0 ? "trending-up" : "trending-down"}
-                    size={12}
-                    color={delta >= 0 ? D.primary : "#FF6B6B"}
-                  />
-                  <Text style={[s.deltaText, { color: delta >= 0 ? D.primary : "#FF6B6B" }]}>
-                    {delta >= 0 ? "+" : ""}{delta}% vs last week
-                  </Text>
-                </View>
-              )}
-            </View>
-            <View style={s.stripValueRow}>
-              <CountUp value={a.thisWeekMin} style={s.stripValue} />
-              <Text style={s.stripUnit}>min</Text>
-            </View>
-          </View>
-        </FadeTranslate>
-
-        {/* ── Muscle heatmap (hero) ── */}
+        {/* ── Muscle focus centerpiece ── */}
         <FadeTranslate order={0} delay={230} direction="y" translateYFrom={16}>
-          <View style={s.card}>
+          <LinearGradient
+            colors={["#1B2511", "#12150F", "#101011"]}
+            locations={[0, 0.44, 1]}
+            style={[s.card, s.heatmapCard]}
+          >
             <View style={s.cardHeaderRow}>
-              <Text style={s.eyebrow}>MUSCLE HEATMAP</Text>
-              <Text style={s.cardHeaderDim}>All sessions</Text>
+              <View>
+                <Text style={s.eyebrow}>MUSCLE FOCUS</Text>
+                <Text style={s.heatmapTitle}>Your training map</Text>
+              </View>
+              <View style={s.figureToggle}>
+                {(["front", "back"] as const).map((side) => {
+                  const active = figureSide === side;
+                  return (
+                    <TouchableOpacity
+                      key={side}
+                      activeOpacity={0.85}
+                      onPress={() => setFigureSide(side)}
+                      style={[s.figureToggleButton, active && s.figureToggleButtonActive]}
+                    >
+                      <Text style={[s.figureToggleText, active && s.figureToggleTextActive]}>
+                        {side === "front" ? "Front" : "Back"}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
-            <View style={s.figuresRow}>
-              <View style={s.figureCol}>
-                <BodyFigure side="front" heat={heat} />
-                <Text style={s.figureLabel}>FRONT</Text>
-              </View>
-              <View style={s.figuresDivider} />
-              <View style={s.figureCol}>
-                <BodyFigure side="back" heat={heat} />
-                <Text style={s.figureLabel}>BACK</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.muscleChips}
+            >
+              {topMuscles.map((item) => {
+                const active = focusedMuscle === item.name;
+                return (
+                  <TouchableOpacity
+                    key={item.name}
+                    activeOpacity={0.85}
+                    onPress={() => setSelectedMuscle(item.name as Group)}
+                    style={[s.muscleChip, active && s.muscleChipActive]}
+                  >
+                    <View style={[s.muscleChipDot, active && s.muscleChipDotActive]} />
+                    <Text style={[s.muscleChipText, active && s.muscleChipTextActive]}>{item.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={s.figureStage}>
+              <Text style={s.figureGhost}>FOCUS</Text>
+              <BodyFigure side={figureSide} heat={heat} width={178} selected={focusedMuscle} />
+              <View style={s.focusReadout}>
+                <View>
+                  <Text style={s.focusReadoutLabel}>SELECTED GROUP</Text>
+                  <Text style={s.focusReadoutTitle}>{focusedMuscle ?? "No data yet"}</Text>
+                </View>
+                <View style={s.focusPctWrap}>
+                  <Text style={s.focusPct}>{focusedSplit?.pct ?? 0}%</Text>
+                  <Text style={s.focusPctLabel}>of sessions</Text>
+                </View>
               </View>
             </View>
 
@@ -864,17 +912,22 @@ export default function Analytics() {
               />
               <Text style={s.legendText}>More</Text>
             </View>
-          </View>
+          </LinearGradient>
         </FadeTranslate>
 
         {/* ── Training split ── */}
         <FadeTranslate order={0} delay={300} direction="y" translateYFrom={16}>
-          <View style={s.card}>
+          <LinearGradient colors={["#17171A", "#101012"]} style={s.card}>
             <View style={s.cardHeaderRow}>
-              <Text style={s.eyebrow}>TRAINING SPLIT</Text>
-              <Text style={s.cardHeaderDim}>Share of volume</Text>
+              <View>
+                <Text style={s.eyebrow}>TRAINING SPLIT</Text>
+                <Text style={s.cardTitle}>Session distribution</Text>
+              </View>
+              <View style={s.rangeBadge}>
+                <Text style={s.rangeBadgeText}>{rangeConfig.shortLabel}</Text>
+              </View>
             </View>
-            <View style={{ gap: 13, marginTop: 18 }}>
+            <View style={{ gap: 15, marginTop: 22 }}>
               {visibleSplit.map((m) => (
                 <View key={m.name} style={s.splitRow}>
                   <Text style={s.splitName}>{m.name}</Text>
@@ -909,38 +962,22 @@ export default function Analytics() {
                 color={D.sub}
               />
             </TouchableOpacity>
-          </View>
-        </FadeTranslate>
-
-        {/* ── Active time + energy ── */}
-        <FadeTranslate order={0} delay={360} direction="y" translateYFrom={14}>
-          <View style={s.miniRow}>
-            <View style={s.miniCard}>
-              <Text style={s.eyebrow}>ACTIVE TIME</Text>
-              <View style={s.miniValueRow}>
-                <CountUp
-                  value={a.totalMinutes}
-                  style={s.miniValue}
-                  format={(v) => (a.totalMinutes >= 100 ? (v / 60).toFixed(1) : `${Math.round(v)}`)}
-                />
-                <Text style={s.miniUnit}>{a.totalMinutes >= 100 ? "h" : "min"}</Text>
-              </View>
-            </View>
-            <View style={s.miniCard}>
-              <Text style={s.eyebrow}>ENERGY BURNED</Text>
-              <View style={s.miniValueRow}>
-                <CountUp value={a.totalKcal} style={s.miniValue} format={fmtThousand} />
-                <Text style={s.miniUnit}>kcal</Text>
-              </View>
-            </View>
-          </View>
+          </LinearGradient>
         </FadeTranslate>
 
         {/* ── Personal bests ── */}
         <FadeTranslate order={0} delay={420} direction="y" translateYFrom={16}>
-          <View style={s.card}>
-            <Text style={s.eyebrow}>PERSONAL BESTS</Text>
-            <View style={{ gap: 0, marginTop: 6 }}>
+          <LinearGradient colors={["#1D1913", "#111112"]} style={s.card}>
+            <View style={s.cardHeaderRow}>
+              <View>
+                <Text style={s.eyebrow}>PERSONAL BESTS</Text>
+                <Text style={s.cardTitle}>Your high marks</Text>
+              </View>
+              <View style={s.trophyIcon}>
+                <Ionicons name="trophy" size={16} color="#FFCC66" />
+              </View>
+            </View>
+            <View style={{ gap: 0, marginTop: 12 }}>
               <View style={s.bestRow}>
                 <View style={s.bestIconWrap}>
                   <Ionicons name="hourglass-outline" size={15} color={D.primary} />
@@ -972,15 +1009,20 @@ export default function Analytics() {
                 </Text>
               </View>
             </View>
-          </View>
+          </LinearGradient>
         </FadeTranslate>
 
         {/* ── Insight ── */}
         <FadeTranslate order={0} delay={480} direction="y" translateYFrom={14}>
-          <View style={s.insightBanner}>
-            <View style={s.insightAccent} />
-            <Text style={s.insightText}>{insight}</Text>
-          </View>
+          <LinearGradient colors={["#263911", "#151A10"]} style={s.insightBanner}>
+            <View style={s.insightIcon}>
+              <Ionicons name="sparkles" size={15} color="#000" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.insightLabel}>COACHING SIGNAL</Text>
+              <Text style={s.insightText}>{insight}</Text>
+            </View>
+          </LinearGradient>
         </FadeTranslate>
       </ScrollView>
     </View>
@@ -992,15 +1034,19 @@ const s = StyleSheet.create({
 
   header: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingHorizontal: H_PAD, paddingBottom: 18,
+    paddingHorizontal: H_PAD, paddingBottom: 16,
   },
   headerTitle: {
-    color: D.text, fontFamily: theme.bold, fontSize: 30, letterSpacing: -0.8,
+    color: D.text, fontFamily: theme.bold, fontSize: 27, letterSpacing: -0.8,
+  },
+  headerSub: {
+    color: "rgba(255,255,255,0.38)", fontFamily: theme.medium,
+    fontSize: 11.5, marginTop: 2,
   },
   closeBtn: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.07)",
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "#161618",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.07)",
     justifyContent: "center", alignItems: "center",
   },
 
@@ -1009,23 +1055,84 @@ const s = StyleSheet.create({
     fontSize: 10.5, letterSpacing: 1.3,
   },
 
-  // Row 1
-  row1: { flexDirection: "row", gap: 10, paddingHorizontal: H_PAD, marginBottom: 10 },
-  bigCard: {
-    flex: 1, height: 178, borderRadius: 22, padding: CARD_PAD,
-    backgroundColor: D.card,
-    borderWidth: 1, borderColor: D.border,
+  // Primary metric
+  hero: {
+    paddingHorizontal: H_PAD, paddingTop: 29, paddingBottom: 28,
+  },
+  heroLabelRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  heroIcon: {
+    width: 30, height: 30, borderRadius: 10,
+    alignItems: "center", justifyContent: "center", backgroundColor: D.primary,
+    shadowColor: D.primary, shadowOpacity: 0.42, shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  heroLabel: {
+    color: "rgba(255,255,255,0.62)", fontFamily: theme.bold,
+    fontSize: 10, letterSpacing: 1.25,
+  },
+  livePill: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    borderRadius: 999, paddingHorizontal: 3, height: 27,
+  },
+  liveDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: D.primary },
+  liveText: { color: "rgba(255,255,255,0.55)", fontFamily: theme.medium, fontSize: 9.5 },
+  heroValueRow: {
+    flexDirection: "row", alignItems: "baseline", marginTop: 18, marginBottom: 13,
+  },
+  heroValue: {
+    color: D.text, fontFamily: theme.bold, fontSize: 78, letterSpacing: -5, ...NUM,
+  },
+  heroGoal: {
+    color: "rgba(255,255,255,0.30)", fontFamily: theme.medium,
+    fontSize: 18, letterSpacing: -0.5, marginLeft: 7,
+  },
+  heroMetaRow: { flexDirection: "row", alignItems: "center", gap: 11 },
+  heroMetaPill: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 9, height: 27, borderRadius: 8, backgroundColor: "#111A09",
+  },
+  heroMetaValue: { color: D.primary, fontFamily: theme.bold, fontSize: 10.5, ...NUM },
+  heroMetaLabel: { color: "rgba(255,255,255,0.36)", fontFamily: theme.medium, fontSize: 9.5 },
+  rangeControl: {
+    flexDirection: "row", gap: 5, padding: 4,
+    backgroundColor: "#161618", borderRadius: 999,
+    marginHorizontal: H_PAD,
+  },
+  rangeButton: {
+    flex: 1, height: 36, borderRadius: 999, alignItems: "center", justifyContent: "center",
+  },
+  rangeButtonActive: { backgroundColor: "#fff" },
+  rangeButtonText: {
+    color: "rgba(255,255,255,0.46)", fontFamily: theme.bold, fontSize: 11.5,
+  },
+  rangeButtonTextActive: { color: "#000" },
+
+  // Editorial signal deck
+  signalDeck: {
+    flexDirection: "row", gap: 10, paddingHorizontal: H_PAD, marginBottom: 12,
+  },
+  streakFeature: {
+    flex: 1.12, minHeight: 190, borderRadius: 26, padding: 17,
+    justifyContent: "space-between", overflow: "hidden",
+  },
+  featureTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  featureIcon: {
+    width: 34, height: 34, borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.45)", alignItems: "center", justifyContent: "center",
+  },
+  featureIndex: { color: "rgba(0,0,0,0.3)", fontFamily: theme.bold, fontSize: 10, letterSpacing: 1.2 },
+  featureValue: { color: "#000", fontFamily: theme.bold, fontSize: 64, letterSpacing: -4, ...NUM },
+  featureTitle: { color: "#000", fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.6, marginTop: -7 },
+  featureSub: { color: "rgba(0,0,0,0.48)", fontFamily: theme.medium, fontSize: 9.5, marginTop: 5 },
+  signalStack: { flex: 0.88, gap: 10 },
+  signalCard: {
+    flex: 1, borderRadius: 22, padding: 14,
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.055)",
     justifyContent: "space-between",
   },
-  ringWrap: { width: 68, height: 68 },
-  ringCenter: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center", alignItems: "center",
-  },
-  ringNumber: { color: D.text, fontFamily: theme.bold, fontSize: 23, letterSpacing: -0.5, ...NUM },
-  bigNumber: { color: D.text, fontFamily: theme.bold, fontSize: 44, letterSpacing: -1.5, ...NUM },
-  bigCardLabel: { color: D.text, fontFamily: theme.bold, fontSize: 15.5, letterSpacing: -0.2 },
-  bigCardSub: { color: D.sub, fontFamily: theme.medium, fontSize: 12, marginTop: 3 },
+  signalCardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  signalValue: { color: "#fff", fontFamily: theme.bold, fontSize: 30, letterSpacing: -1.5, ...NUM },
+  signalUnit: { color: "rgba(255,255,255,0.34)", fontFamily: theme.medium, fontSize: 12 },
 
   // Generic card
   card: {
@@ -1039,38 +1146,71 @@ const s = StyleSheet.create({
   },
   cardHeaderValue: { color: D.text, fontFamily: theme.bold, fontSize: 14, ...NUM },
   cardHeaderDim: { color: D.sub, fontFamily: theme.medium, fontSize: 12 },
-
-  // This week strip
-  strip: {
-    flexDirection: "row", alignItems: "center",
-    marginHorizontal: H_PAD, marginBottom: 10,
-    backgroundColor: D.card,
-    borderWidth: 1, borderColor: D.border,
-    borderRadius: 22, paddingHorizontal: CARD_PAD, paddingVertical: 16,
-  },
-  weekDotsRow: { flexDirection: "row", gap: 5 },
-  weekDot: { width: 6, height: 6, borderRadius: 3 },
-  deltaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  deltaText: { fontFamily: theme.bold, fontSize: 11.5 },
-  stripValueRow: { flexDirection: "row", alignItems: "flex-end", gap: 5 },
-  stripValue: { color: D.text, fontFamily: theme.bold, fontSize: 34, letterSpacing: -1, ...NUM },
-  stripUnit: { color: D.sub, fontFamily: theme.bold, fontSize: 14, marginBottom: 5 },
+  cardTitle: { color: "#fff", fontFamily: theme.bold, fontSize: 18, letterSpacing: -0.5, marginTop: 5 },
 
   // Heatmap
-  figuresRow: {
-    flexDirection: "row", justifyContent: "space-evenly", alignItems: "center",
-    marginTop: 20,
+  heatmapCard: {
+    paddingTop: 20, borderColor: "rgba(170,251,5,0.12)", borderRadius: 28,
   },
-  figureCol: { alignItems: "center", gap: 10 },
-  figuresDivider: {
-    width: 1, alignSelf: "stretch", marginVertical: 24,
-    backgroundColor: "rgba(255,255,255,0.05)",
+  heatmapTitle: {
+    color: D.text, fontFamily: theme.bold, fontSize: 21,
+    letterSpacing: -0.6, marginTop: 5,
   },
-  figureLabel: {
-    color: "rgba(255,255,255,0.3)", fontFamily: theme.medium,
-    fontSize: 10, letterSpacing: 1.6,
+  rangeBadge: {
+    backgroundColor: "rgba(170,251,5,0.10)",
+    borderWidth: 1, borderColor: "rgba(170,251,5,0.14)",
+    borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6,
   },
-
+  rangeBadgeText: { color: D.primary, fontFamily: theme.bold, fontSize: 10 },
+  figureToggle: {
+    flexDirection: "row", gap: 3, padding: 3, borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.045)",
+  },
+  figureToggleButton: {
+    minWidth: 52, height: 29, borderRadius: 999,
+    alignItems: "center", justifyContent: "center",
+  },
+  figureToggleButtonActive: { backgroundColor: D.primary },
+  figureToggleText: {
+    color: "rgba(255,255,255,0.42)", fontFamily: theme.bold, fontSize: 11.5,
+  },
+  figureToggleTextActive: { color: "#000" },
+  muscleChips: { gap: 7, paddingTop: 17, paddingBottom: 3 },
+  muscleChip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    borderRadius: 999, paddingHorizontal: 11, height: 30,
+    backgroundColor: "rgba(255,255,255,0.045)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.05)",
+  },
+  muscleChipActive: { backgroundColor: "#fff", borderColor: "#fff" },
+  muscleChipDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.2)" },
+  muscleChipDotActive: { backgroundColor: D.primary },
+  muscleChipText: { color: "rgba(255,255,255,0.52)", fontFamily: theme.bold, fontSize: 10.5 },
+  muscleChipTextActive: { color: "#000" },
+  figureStage: {
+    minHeight: 420, marginTop: 10, borderRadius: 24,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.17)",
+    borderWidth: 1, borderColor: "rgba(170,251,5,0.07)",
+    overflow: "hidden",
+  },
+  figureGhost: {
+    position: "absolute", top: 48,
+    color: "rgba(170,251,5,0.035)", fontFamily: theme.black,
+    fontSize: 62, letterSpacing: -3,
+  },
+  focusReadout: {
+    position: "absolute", left: 12, right: 12, bottom: 12,
+    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+    paddingHorizontal: 14, paddingVertical: 12, borderRadius: 17,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+  },
+  focusReadoutLabel: { color: D.primary, fontFamily: theme.bold, fontSize: 8.5, letterSpacing: 1.1 },
+  focusReadoutTitle: { color: "#fff", fontFamily: theme.bold, fontSize: 17, marginTop: 3 },
+  focusPctWrap: { alignItems: "flex-end" },
+  focusPct: { color: "#fff", fontFamily: theme.bold, fontSize: 22, letterSpacing: -0.8, ...NUM },
+  focusPctLabel: { color: D.sub, fontFamily: theme.medium, fontSize: 8.5 },
   heatStatsRow: {
     flexDirection: "row", alignItems: "center",
     marginTop: 20, paddingTop: 16,
@@ -1094,8 +1234,8 @@ const s = StyleSheet.create({
   splitRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   splitName: { width: 88, color: "rgba(255,255,255,0.72)", fontFamily: theme.medium, fontSize: 13 },
   splitBarTrack: {
-    flex: 1, height: 6, borderRadius: 3,
-    backgroundColor: "rgba(255,255,255,0.06)",
+    flex: 1, height: 8, borderRadius: 4,
+    backgroundColor: "rgba(255,255,255,0.055)",
     overflow: "hidden",
   },
   splitPct: {
@@ -1108,18 +1248,6 @@ const s = StyleSheet.create({
   },
   showAllText: { color: D.sub, fontFamily: theme.medium, fontSize: 12.5 },
 
-  // Mini cards
-  miniRow: { flexDirection: "row", gap: 10, paddingHorizontal: H_PAD, marginBottom: 10 },
-  miniCard: {
-    flex: 1,
-    backgroundColor: D.card,
-    borderWidth: 1, borderColor: D.border,
-    borderRadius: 22, padding: 16,
-  },
-  miniValueRow: { flexDirection: "row", alignItems: "flex-end", gap: 4, marginTop: 10 },
-  miniValue: { color: D.text, fontFamily: theme.bold, fontSize: 26, letterSpacing: -0.8, ...NUM },
-  miniUnit: { color: D.sub, fontFamily: theme.bold, fontSize: 13, marginBottom: 3 },
-
   // Personal bests
   bestRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 13 },
   bestDivider: { height: 1, backgroundColor: "rgba(255,255,255,0.04)", marginLeft: 46 },
@@ -1131,21 +1259,27 @@ const s = StyleSheet.create({
   bestLabel: { color: "rgba(255,255,255,0.78)", fontFamily: theme.medium, fontSize: 13.5 },
   bestMeta: { color: D.sub, fontFamily: theme.medium, fontSize: 11, marginTop: 1 },
   bestValue: { color: D.text, fontFamily: theme.bold, fontSize: 13.5, ...NUM },
+  trophyIcon: {
+    width: 36, height: 36, borderRadius: 12,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,204,102,0.10)",
+    borderWidth: 1, borderColor: "rgba(255,204,102,0.13)",
+  },
 
   // Insight
   insightBanner: {
     flexDirection: "row", alignItems: "center", gap: 14,
     marginHorizontal: H_PAD,
-    backgroundColor: D.card,
-    borderWidth: 1, borderColor: D.border,
-    borderRadius: 18, paddingHorizontal: 16, paddingVertical: 15,
+    borderWidth: 1, borderColor: "rgba(170,251,5,0.14)",
+    borderRadius: 22, paddingHorizontal: 16, paddingVertical: 16,
   },
-  insightAccent: {
-    width: 3, alignSelf: "stretch", borderRadius: 2,
-    backgroundColor: D.primary,
+  insightIcon: {
+    width: 38, height: 38, borderRadius: 13,
+    backgroundColor: D.primary, alignItems: "center", justifyContent: "center",
   },
+  insightLabel: { color: D.primary, fontFamily: theme.bold, fontSize: 8.5, letterSpacing: 1.1, marginBottom: 4 },
   insightText: {
-    flex: 1, color: "rgba(255,255,255,0.82)",
+    color: "rgba(255,255,255,0.84)",
     fontFamily: theme.medium, fontSize: 13, lineHeight: 19,
   },
 });
